@@ -37,6 +37,24 @@ const directionLabels: Record<AnalysisNode["direction"], string> = {
   neutral: "方向中性",
 };
 
+const confidenceLabels: Record<AnalysisLink["confidence"], string> = {
+  high: "高置信",
+  medium: "中置信",
+  low: "低置信",
+};
+
+function signedPercent(value: number | null) {
+  if (value == null) return "--";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function reactionLabel(node: AnalysisNode) {
+  const reaction = node.marketReaction;
+  if (!reaction) return "";
+  if (reaction.status === "unavailable") return `市场反应未验证：${reaction.reason || "行情不足"}`;
+  return `超额收益 5分钟 ${signedPercent(reaction.excessReturn5m)} · 30分钟 ${signedPercent(reaction.excessReturn30m)} · 1日 ${signedPercent(reaction.excessReturn1d)} · ${reaction.sampleSize} 个样本`;
+}
+
 export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNetworkProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -86,7 +104,7 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
       .attr("class", (link) => `network-link is-${link.type}`)
       .attr("stroke-width", (link) => Math.min(5, 0.7 + link.weight * 2.4 + Math.sqrt(link.cooccurrenceCount) * 0.35));
     linkSelection.append("title")
-      .text((link) => `${relationshipLabels[link.type]} · 共同事件 ${link.cooccurrenceCount} · NPMI ${link.npmi.toFixed(2)} · ${link.confidence} confidence`);
+      .text((link) => `${relationshipLabels[link.type]} · 共同事件 ${link.cooccurrenceCount} · NPMI ${link.npmi.toFixed(2)} · ${confidenceLabels[link.confidence]}`);
 
     const nodeSelection = root.append("g")
       .attr("class", "network-nodes")
@@ -125,7 +143,7 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
       .attr("y", 4)
       .text((node) => node.label.length > 8 ? `${node.label.slice(0, 8)}…` : node.label);
     nodeSelection.append("title")
-      .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${node.label}${node.symbol ? ` (${node.symbol})` : ""} · ${node.mentions} 个事件 · ${directionLabels[node.direction]}${node.marketReaction?.status === "unavailable" ? " · 市场反应未验证" : ""}`);
+      .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${node.label}${node.symbol ? ` (${node.symbol})` : ""} · ${node.mentions} 个事件 · ${directionLabels[node.direction]}${node.marketReaction ? ` · ${reactionLabel(node)}` : ""}`);
 
     const simulation = d3.forceSimulation<SimNode>(graphNodes)
       .force("link", d3.forceLink<SimNode, SimLink>(graphLinks).id((node) => node.id).distance((link) => link.type === "stock-cooccurrence" ? 80 : 66).strength((link) => 0.25 + link.weight * 0.35))
@@ -186,7 +204,7 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
           <i className={`is-${selected.type}`} />
           <strong>{selected.label}</strong>
           {selected.symbol ? <span>{selected.symbol}</span> : null}
-          <span>{selected.mentions} 个事件 · {directionLabels[selected.direction]}{selected.marketReaction?.status === "unavailable" ? " · 市场反应未验证" : ""}</span>
+          <span title={reactionLabel(selected)}>{selected.mentions} 个事件 · {directionLabels[selected.direction]}{selected.marketReaction ? ` · ${reactionLabel(selected)}` : ""}</span>
         </div>
       ) : null}
     </div>

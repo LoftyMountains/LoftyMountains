@@ -595,6 +595,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .network-selection span:last-child { margin-left: auto; white-space: nowrap; }
 .network-legend { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 9px; }
 .network-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.network-edge-legend { min-height: 28px; display: flex; flex: 0 0 auto; align-items: center; justify-content: center; flex-wrap: wrap; gap: 5px 12px; padding: 5px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; }
+.network-edge-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.network-edge-legend i { width: 16px; height: 0; display: inline-block; border-top: 2px solid var(--network-link); }
+.network-edge-legend .is-stock-cooccurrence { border-color: var(--red-soft); }
+.network-edge-legend .is-company-industry { border-color: var(--green); }
+.network-edge-legend .is-policy-impact { border-color: var(--blue); border-top-style: dashed; }
+.network-edge-legend .is-supply-chain { border-color: var(--gold); border-top-style: dotted; }
 .analysis-empty { position: absolute; inset: 0; display: grid; place-content: center; color: var(--muted); font-size: 11px; text-align: center; }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .38; } }

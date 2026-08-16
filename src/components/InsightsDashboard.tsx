@@ -7,6 +7,14 @@ import { StockNetwork } from "./StockNetwork";
 import { WordCloud } from "./WordCloud";
 import { apiUrl } from "../lib/api";
 
+const relationshipLegend = [
+  ["news-cooccurrence", "新闻共现"],
+  ["stock-cooccurrence", "股票共现"],
+  ["company-industry", "公司行业"],
+  ["policy-impact", "政策影响"],
+  ["supply-chain", "供应链事件"],
+] as const;
+
 export function InsightsDashboard() {
   const [payload, setPayload] = useState<AnalysisPayload | null>(null);
   const [selectedHours, setSelectedHours] = useState(24);
@@ -157,6 +165,9 @@ export function InsightsDashboard() {
             <div><Share2 size={17} /><h2 id="stock-network-title">关联股票图</h2></div>
             <div className="network-legend"><span><i className="is-stock" />股票</span><span><i className="is-topic" />主题</span></div>
           </header>
+          <div className="network-edge-legend" aria-label="关系类型图例">
+            {relationshipLegend.map(([type, label]) => <span key={type}><i className={`is-${type}`} />{label}</span>)}
+          </div>
           <StockNetwork
             nodes={active?.nodes || []}
             links={active?.links || []}
