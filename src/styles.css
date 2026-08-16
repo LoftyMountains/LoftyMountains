@@ -209,6 +209,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   cursor: pointer;
 }
 .icon-button:hover { border-color: #5a6672; background: var(--surface-2); }
+.github-link { color: var(--muted); text-decoration: none; }
+.github-link:hover { color: var(--text); }
 .theme-switcher { height: 34px; display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface-2); }
 .theme-switcher button { width: 27px; height: 28px; padding: 0; display: inline-grid; place-items: center; border: 0; border-radius: 3px; background: transparent; color: var(--muted); cursor: pointer; }
 .theme-switcher button:hover { color: var(--text); }

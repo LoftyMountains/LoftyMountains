@@ -1,4 +1,4 @@
-import { Activity, ChartNoAxesCombined, Monitor, Moon, Radio, Sun, Wifi, WifiOff } from "lucide-react";
+import { Activity, ChartNoAxesCombined, Github, Monitor, Moon, Radio, Sun, Wifi, WifiOff } from "lucide-react";
 import type { SourceStatus } from "../../shared/types";
 import type { ThemeMode } from "../lib/theme";
 import { formatClock, formatDay } from "../lib/time";
@@ -50,6 +50,16 @@ export function Header({ connected, serverTime, sources, theme, onInsightsClick,
             <ChartNoAxesCombined size={16} />
             <span>市场洞察</span>
           </button>
+          <a
+            className="icon-button github-link"
+            href="https://github.com/LoftyMountains/LoftyMountains"
+            target="_blank"
+            rel="noreferrer"
+            title="查看 GitHub 仓库"
+            aria-label="查看 GitHub 仓库"
+          >
+            <Github size={17} />
+          </a>
           <div className="theme-switcher" role="group" aria-label="颜色模式">
             {themeOptions.map(({ mode, label, icon: Icon }) => (
               <button
