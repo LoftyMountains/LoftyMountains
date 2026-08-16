@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title desc">
+  <title id="title">景行 Lofty Mountains</title>
+  <desc id="desc">金融红双峰、金色上行山径与峰顶信号组成的景行标志</desc>
+  <path fill="#A92532" d="M3.5 39 16.8 15.6a2 2 0 0 1 3.3-.2l4.1 5.2 6-11a2 2 0 0 1 3.5.1L45 39H3.5Z"/>
+  <path fill="#D94C52" d="m7.8 39 9.8-17.2 4.1 5.3L16 39H7.8Z"/>
+  <path fill="none" stroke="#F2C14E" stroke-linecap="round" stroke-width="3.2" d="M18.2 39c.2-5.7 9.5-5.4 9.3-11.2-.1-2.4-1.7-3.7-3.3-5.3"/>
+  <circle cx="35.8" cy="8.2" r="4.2" fill="#F2C14E" stroke="#7D1E29" stroke-width="1.8"/>
+</svg>
