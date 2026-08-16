@@ -144,6 +144,7 @@ export function InsightsDashboard() {
                 <span>{selectedWord.count} 个事件</span>
                 <span>前窗 {selectedWord.baselineCount}</span>
                 <span>突发 {selectedWord.burst >= 0 ? "+" : ""}{selectedWord.burst.toFixed(2)}</span>
+                <span>来源多样性 {Math.round(selectedWord.sourceDiversity * 100)}%</span>
                 <span>{selectedWord.direction === "positive" ? "偏正面" : selectedWord.direction === "negative" ? "偏负面" : selectedWord.direction === "mixed" ? "方向混合" : "方向中性"}</span>
                 <span className="topic-example">{selectedWord.example}</span>
               </>

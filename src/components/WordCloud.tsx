@@ -15,6 +15,13 @@ interface WordCloudProps {
   onPreviewEnd: () => void;
 }
 
+const directionLabels: Record<AnalysisWord["direction"], string> = {
+  positive: "偏正面",
+  negative: "偏负面",
+  mixed: "方向混合",
+  neutral: "方向中性",
+};
+
 export function WordCloud({ words, selected, onPreview, onPreviewEnd }: WordCloudProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -87,7 +94,7 @@ export function WordCloud({ words, selected, onPreview, onPreviewEnd }: WordClou
           onBlur={onPreviewEnd}
           onClick={(event) => onPreview(word, { x: event.clientX, y: event.clientY })}
           aria-pressed={selected === word.text}
-          title={`${word.text} · ${word.count} 个事件 · 前窗 ${word.baselineCount} · 突发度 ${word.burst.toFixed(2)} · 来源多样性 ${Math.round(word.sourceDiversity * 100)}% · ${word.direction} · ${word.example}`}
+          title={`${word.text} · ${word.count} 个事件 · 前窗 ${word.baselineCount} · 突发度 ${word.burst.toFixed(2)} · 来源多样性 ${Math.round(word.sourceDiversity * 100)}% · ${directionLabels[word.direction]} · ${word.example}`}
         >
           {word.text}
         </button>
