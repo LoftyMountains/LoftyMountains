@@ -22,6 +22,21 @@ interface ZoomControls {
   reset: () => void;
 }
 
+const relationshipLabels: Record<AnalysisLink["type"], string> = {
+  "news-cooccurrence": "新闻共现",
+  "stock-cooccurrence": "股票共现",
+  "company-industry": "公司行业",
+  "policy-impact": "政策影响",
+  "supply-chain": "供应链事件",
+};
+
+const directionLabels: Record<AnalysisNode["direction"], string> = {
+  positive: "偏正面",
+  negative: "偏负面",
+  mixed: "方向混合",
+  neutral: "方向中性",
+};
+
 export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNetworkProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -51,7 +66,7 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
     svg.selectAll("*").remove();
     svg.attr("viewBox", `0 0 ${size.width} ${size.height}`);
     svg.append("title").text("快讯主题与关联股票网络");
-    svg.append("desc").text("方形节点表示股票，圆形节点表示新闻主题，连线粗细表示共同出现次数。节点可拖动，画布可缩放。 ");
+    svg.append("desc").text("方形节点表示股票，圆形节点表示新闻主题；关系线区分新闻共现、股票共现、公司行业、政策影响和供应链事件。 ");
     const root = svg.append("g");
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.55, 2.5])
@@ -69,7 +84,9 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
       .data(graphLinks)
       .join("line")
       .attr("class", (link) => `network-link is-${link.type}`)
-      .attr("stroke-width", (link) => Math.min(4, 0.7 + Math.sqrt(link.weight)));
+      .attr("stroke-width", (link) => Math.min(5, 0.7 + link.weight * 2.4 + Math.sqrt(link.cooccurrenceCount) * 0.35));
+    linkSelection.append("title")
+      .text((link) => `${relationshipLabels[link.type]} · 共同事件 ${link.cooccurrenceCount} · NPMI ${link.npmi.toFixed(2)} · ${link.confidence} confidence`);
 
     const nodeSelection = root.append("g")
       .attr("class", "network-nodes")
@@ -108,10 +125,10 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
       .attr("y", 4)
       .text((node) => node.label.length > 8 ? `${node.label.slice(0, 8)}…` : node.label);
     nodeSelection.append("title")
-      .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${node.label}${node.symbol ? ` (${node.symbol})` : ""} · ${node.mentions} 条快讯`);
+      .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${node.label}${node.symbol ? ` (${node.symbol})` : ""} · ${node.mentions} 个事件 · ${directionLabels[node.direction]}${node.marketReaction?.status === "unavailable" ? " · 市场反应未验证" : ""}`);
 
     const simulation = d3.forceSimulation<SimNode>(graphNodes)
-      .force("link", d3.forceLink<SimNode, SimLink>(graphLinks).id((node) => node.id).distance((link) => link.type === "stock-stock" ? 80 : 66).strength(0.45))
+      .force("link", d3.forceLink<SimNode, SimLink>(graphLinks).id((node) => node.id).distance((link) => link.type === "stock-cooccurrence" ? 80 : 66).strength((link) => 0.25 + link.weight * 0.35))
       .force("charge", d3.forceManyBody<SimNode>().strength((node) => node.type === "stock" ? -190 : -105))
       .force("center", d3.forceCenter(size.width / 2, size.height / 2))
       .force("collision", d3.forceCollide<SimNode>().radius((node) => node.type === "stock" ? 32 : 25).iterations(2))
@@ -169,7 +186,7 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
           <i className={`is-${selected.type}`} />
           <strong>{selected.label}</strong>
           {selected.symbol ? <span>{selected.symbol}</span> : null}
-          <span>{selected.mentions} 条快讯 · {selected.sourceCount} 个来源</span>
+          <span>{selected.mentions} 个事件 · {directionLabels[selected.direction]}{selected.marketReaction?.status === "unavailable" ? " · 市场反应未验证" : ""}</span>
         </div>
       ) : null}
     </div>

@@ -118,7 +118,7 @@ export function InsightsDashboard() {
           >
             <span>{window.label}</span>
             <strong>{window.eventCount}</strong>
-            <small>{window.words[0]?.text || "暂无热点"}</small>
+            <small>{window.complete ? window.words[0]?.text || "暂无热点" : `覆盖 ${Math.round(window.coverageRatio * 100)}% · ${window.words[0]?.text || "数据积累中"}`}</small>
           </button>
         ))}
         {!payload && loading ? Array.from({ length: 4 }, (_, index) => <div className="window-skeleton" key={index} />) : null}
@@ -142,8 +142,9 @@ export function InsightsDashboard() {
               <>
                 <strong>{selectedWord.text}</strong>
                 <span>{selectedWord.count} 个事件</span>
-                <span>{selectedWord.sourceCount} 个来源</span>
-                <span>热度第 {selectedWord.rank}</span>
+                <span>前窗 {selectedWord.baselineCount}</span>
+                <span>突发 {selectedWord.burst >= 0 ? "+" : ""}{selectedWord.burst.toFixed(2)}</span>
+                <span>{selectedWord.direction === "positive" ? "偏正面" : selectedWord.direction === "negative" ? "偏负面" : selectedWord.direction === "mixed" ? "方向混合" : "方向中性"}</span>
                 <span className="topic-example">{selectedWord.example}</span>
               </>
             ) : <span>{active ? `共 ${active.words.length} 个高频词` : "暂无统计"}</span>}
@@ -165,6 +166,7 @@ export function InsightsDashboard() {
             <span>股票 {active?.nodes.filter((node) => node.type === "stock").length || 0}</span>
             <span>主题 {active?.nodes.filter((node) => node.type === "topic").length || 0}</span>
             <span>关联 {active?.links.length || 0}</span>
+            <span>高置信 {active?.links.filter((link) => link.confidence === "high").length || 0}</span>
           </footer>
         </section>
       </div>

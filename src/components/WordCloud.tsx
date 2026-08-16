@@ -87,7 +87,7 @@ export function WordCloud({ words, selected, onPreview, onPreviewEnd }: WordClou
           onBlur={onPreviewEnd}
           onClick={(event) => onPreview(word, { x: event.clientX, y: event.clientY })}
           aria-pressed={selected === word.text}
-          title={`${word.text} · ${word.count} 个事件 · ${word.sourceCount} 个来源 · ${word.example}`}
+          title={`${word.text} · ${word.count} 个事件 · 前窗 ${word.baselineCount} · 突发度 ${word.burst.toFixed(2)} · 来源多样性 ${Math.round(word.sourceDiversity * 100)}% · ${word.direction} · ${word.example}`}
         >
           {word.text}
         </button>

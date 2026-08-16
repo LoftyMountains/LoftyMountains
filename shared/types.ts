@@ -22,10 +22,24 @@ export interface NewsItem {
 export interface AnalysisWord {
   text: string;
   count: number;
+  baselineCount: number;
   sourceCount: number;
+  sourceDiversity: number;
   rank: number;
   score: number;
+  burst: number;
+  direction: "positive" | "negative" | "mixed" | "neutral";
+  directionScore: number;
   example: string;
+}
+
+export interface AnalysisMarketReaction {
+  status: "verified" | "unavailable";
+  reason?: string;
+  sampleSize: number;
+  excessReturn5m: number | null;
+  excessReturn30m: number | null;
+  excessReturn1d: number | null;
 }
 
 export interface AnalysisNode {
@@ -35,13 +49,21 @@ export interface AnalysisNode {
   mentions: number;
   sourceCount: number;
   symbol?: string;
+  direction: "positive" | "negative" | "mixed" | "neutral";
+  directionScore: number;
+  marketReaction?: AnalysisMarketReaction;
 }
+
+export type AnalysisRelationshipType = "news-cooccurrence" | "stock-cooccurrence" | "company-industry" | "policy-impact" | "supply-chain";
 
 export interface AnalysisLink {
   source: string;
   target: string;
   weight: number;
-  type: "topic-stock" | "stock-stock";
+  cooccurrenceCount: number;
+  npmi: number;
+  confidence: "low" | "medium" | "high";
+  type: AnalysisRelationshipType;
 }
 
 export interface AnalysisWindow {
@@ -49,8 +71,13 @@ export interface AnalysisWindow {
   label: string;
   from: string;
   to: string;
+  actualFrom: string | null;
+  actualTo: string | null;
+  coverageRatio: number;
+  complete: boolean;
   itemCount: number;
   eventCount: number;
+  baselineEventCount: number;
   sourceCount: number;
   words: AnalysisWord[];
   nodes: AnalysisNode[];

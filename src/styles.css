@@ -560,7 +560,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .stock-network { position: relative; min-height: 280px; flex: 1 1 0; overflow: hidden; isolation: isolate; }
 .network-svg { width: 100%; height: 100%; display: block; touch-action: none; }
 .network-links line { stroke: var(--network-link); stroke-opacity: .6; }
-.network-links .is-stock-stock { stroke: var(--red-soft); stroke-opacity: .75; }
+.network-links .is-stock-cooccurrence { stroke: var(--red-soft); stroke-opacity: .8; }
+.network-links .is-company-industry { stroke: var(--green); stroke-opacity: .8; }
+.network-links .is-policy-impact { stroke: var(--blue); stroke-opacity: .82; stroke-dasharray: 5 3; }
+.network-links .is-supply-chain { stroke: var(--gold); stroke-opacity: .85; stroke-dasharray: 2 3; }
 .network-node rect { fill: var(--red); stroke: #f27a7a; stroke-width: 1px; }
 .network-node circle { fill: var(--gold); stroke: #f0cc8f; stroke-width: 1px; }
 .network-node:hover rect, .network-node:hover circle { filter: brightness(1.18); }
