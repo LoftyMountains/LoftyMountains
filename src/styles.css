@@ -36,7 +36,6 @@
   --chart-cursor: #87929d;
   --chart-volume: #7f8b96;
   --chart-reference: #9ba5af;
-  --grid-pattern: rgba(125, 137, 149, .15);
   --network-link: #8e99a4;
   --network-label-stroke: #f5f7fa;
   --floating-control: rgba(255, 255, 255, .9);
@@ -83,7 +82,6 @@
   --chart-cursor: #6f7a85;
   --chart-volume: #49515a;
   --chart-reference: #5e6872;
-  --grid-pattern: rgba(52, 62, 72, .18);
   --network-link: #47525d;
   --network-label-stroke: #0b0e12;
   --floating-control: rgba(13, 17, 21, .88);
@@ -131,7 +129,6 @@
     --chart-cursor: #6f7a85;
     --chart-volume: #49515a;
     --chart-reference: #5e6872;
-    --grid-pattern: rgba(52, 62, 72, .18);
     --network-link: #47525d;
     --network-label-stroke: #0b0e12;
     --floating-control: rgba(13, 17, 21, .88);
@@ -537,15 +534,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .analysis-panel > footer .topic-example { min-width: 0; margin-left: auto; overflow: hidden; color: var(--text-2); text-overflow: ellipsis; }
 
 .word-cloud { position: relative; min-height: 280px; flex: 1 1 0; overflow: hidden; isolation: isolate; }
-.word-cloud::before, .stock-network::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background-image: linear-gradient(var(--grid-pattern) 1px, transparent 1px), linear-gradient(90deg, var(--grid-pattern) 1px, transparent 1px);
-  background-size: 36px 36px;
-}
 .cloud-word {
   position: absolute;
   z-index: 1;
