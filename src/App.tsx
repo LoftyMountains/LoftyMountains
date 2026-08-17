@@ -50,6 +50,7 @@ export function App() {
   const [speed, setSpeed] = useState(2);
   const [now, setNow] = useState(Date.now());
   const [theme, setTheme] = useState<ThemeMode>(readThemeMode);
+  const [analysisRevision, setAnalysisRevision] = useState<string | null>(null);
   const latestLiveNewsAt = useRef<string | null>(null);
   const syncingLiveNews = useRef(false);
 
@@ -120,6 +121,10 @@ export function App() {
     });
     events.addEventListener("market", (event) => setMarket(JSON.parse((event as MessageEvent<string>).data) as MarketSnapshot));
     events.addEventListener("sources", (event) => setSources(JSON.parse((event as MessageEvent<string>).data) as SourceStatus[]));
+    events.addEventListener("analysis", (event) => {
+      const invalidation = JSON.parse((event as MessageEvent<string>).data) as { generatedAt: string };
+      setAnalysisRevision(invalidation.generatedAt);
+    });
 
     const syncWhenVisible = () => {
       if (document.visibilityState === "visible") void syncLiveNews();
@@ -296,7 +301,7 @@ export function App() {
         </main>
         {!loading ? (
           <Suspense fallback={<InsightsFallback />}>
-            <InsightsDashboard />
+            <InsightsDashboard revision={analysisRevision} />
           </Suspense>
         ) : <InsightsFallback />}
       </div>

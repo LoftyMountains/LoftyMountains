@@ -7,6 +7,21 @@ import { StockNetwork } from "./StockNetwork";
 import { WordCloud } from "./WordCloud";
 import { apiUrl } from "../lib/api";
 
+const analysisWindows = [
+  { hours: 1, label: "近 1 小时" },
+  { hours: 24, label: "近 1 天" },
+  { hours: 168, label: "近 1 周" },
+  { hours: 720, label: "近 1 月" },
+] as const;
+
+const windowCacheMs = 2 * 60_000;
+
+interface CachedAnalysis {
+  payload: AnalysisPayload;
+  etag: string | null;
+  fetchedAt: number;
+}
+
 const relationshipLegend = [
   ["news-cooccurrence", "新闻共现"],
   ["stock-cooccurrence", "股票共现"],
@@ -15,8 +30,8 @@ const relationshipLegend = [
   ["supply-chain", "供应链事件"],
 ] as const;
 
-export function InsightsDashboard() {
-  const [payload, setPayload] = useState<AnalysisPayload | null>(null);
+export function InsightsDashboard({ revision }: { revision: string | null }) {
+  const [cache, setCache] = useState<Record<number, CachedAnalysis>>({});
   const [selectedHours, setSelectedHours] = useState(24);
   const [selectedWord, setSelectedWord] = useState<AnalysisWord | null>(null);
   const [relatedSelection, setRelatedSelection] = useState<RelatedNewsSelection | null>(null);
@@ -24,28 +39,70 @@ export function InsightsDashboard() {
   const [error, setError] = useState<string | null>(null);
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
+  const cacheRef = useRef(cache);
+  const loadingWindows = useRef(new Set<number>());
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    cacheRef.current = cache;
+  }, [cache]);
+
+  const load = useCallback(async (hours: number, revalidate = false) => {
+    const cached = cacheRef.current[hours];
+    if (!revalidate && cached && Date.now() - cached.fetchedAt < windowCacheMs) return;
+    if (loadingWindows.current.has(hours)) return;
+    loadingWindows.current.add(hours);
     setLoading(true);
     try {
-      const response = await fetch(`${apiUrl("/api/analysis")}?windows=1,24,168,720`);
+      const headers = new Headers();
+      if (cached?.etag) headers.set("If-None-Match", cached.etag);
+      const response = await fetch(`${apiUrl("/api/analysis")}?windows=${hours}`, { headers });
+      if (response.status === 304 && cached) {
+        const refreshed = { ...cached, fetchedAt: Date.now() };
+        cacheRef.current = { ...cacheRef.current, [hours]: refreshed };
+        setCache(cacheRef.current);
+        setError(null);
+        return;
+      }
       if (!response.ok) throw new Error("分析数据加载失败");
-      setPayload(await response.json() as AnalysisPayload);
+      const payload = await response.json() as AnalysisPayload;
+      const next = {
+        payload,
+        etag: response.headers.get("ETag"),
+        fetchedAt: Date.now(),
+      };
+      cacheRef.current = { ...cacheRef.current, [hours]: next };
+      setCache(cacheRef.current);
       setError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "分析数据加载失败");
     } finally {
-      setLoading(false);
+      loadingWindows.current.delete(hours);
+      setLoading(loadingWindows.current.size > 0);
     }
   }, []);
 
   useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void load(), 60_000);
-    return () => window.clearInterval(timer);
-  }, [load]);
+    void load(selectedHours);
+  }, [load, selectedHours]);
 
-  const active = useMemo(() => payload?.windows.find((window) => window.hours === selectedHours) || payload?.windows[0], [payload, selectedHours]);
+  useEffect(() => {
+    if (revision) void load(selectedHours, true);
+  }, [load, revision, selectedHours]);
+
+  useEffect(() => {
+    const revalidateVisibleWindow = () => {
+      if (document.visibilityState === "visible") void load(selectedHours, true);
+    };
+    document.addEventListener("visibilitychange", revalidateVisibleWindow);
+    window.addEventListener("pageshow", revalidateVisibleWindow);
+    return () => {
+      document.removeEventListener("visibilitychange", revalidateVisibleWindow);
+      window.removeEventListener("pageshow", revalidateVisibleWindow);
+    };
+  }, [load, selectedHours]);
+
+  const payload = cache[selectedHours]?.payload || null;
+  const active = useMemo(() => payload?.windows[0], [payload]);
 
   useEffect(() => {
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
@@ -110,26 +167,28 @@ export function InsightsDashboard() {
         </div>
         <div className="insights-heading-meta">
           {payload ? <span>更新于 {formatFull(payload.generatedAt)}</span> : null}
-          <button className={`icon-button ${loading ? "is-spinning" : ""}`} onClick={() => void load()} title="刷新分析" aria-label="刷新分析"><RefreshCw size={17} /></button>
+          <button className={`icon-button ${loading ? "is-spinning" : ""}`} onClick={() => void load(selectedHours, true)} title="刷新分析" aria-label="刷新分析"><RefreshCw size={17} /></button>
         </div>
       </header>
 
       <div className="analysis-windows" role="tablist" aria-label="统计时间窗口">
-        {(payload?.windows || []).map((window) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={selectedHours === window.hours}
-            className={selectedHours === window.hours ? "is-active" : ""}
-            key={window.hours}
-            onClick={() => setSelectedHours(window.hours)}
-          >
-            <span>{window.label}</span>
-            <strong>{window.eventCount}</strong>
-            <small>{window.complete ? window.words[0]?.text || "暂无热点" : `覆盖 ${Math.round(window.coverageRatio * 100)}% · ${window.words[0]?.text || "数据积累中"}`}</small>
-          </button>
-        ))}
-        {!payload && loading ? Array.from({ length: 4 }, (_, index) => <div className="window-skeleton" key={index} />) : null}
+        {analysisWindows.map((option) => {
+          const window = cache[option.hours]?.payload.windows[0];
+          return (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={selectedHours === option.hours}
+              className={selectedHours === option.hours ? "is-active" : ""}
+              key={option.hours}
+              onClick={() => setSelectedHours(option.hours)}
+            >
+              <span>{option.label}</span>
+              <strong>{window?.eventCount ?? "--"}</strong>
+              <small>{window ? `${Math.round(window.coverageRatio * 100)}%${window.complete ? " / 完整" : " / 积累中"} · ${window.words[0]?.text || "暂无热点"}` : "选择后加载"}</small>
+            </button>
+          );
+        })}
       </div>
 
       {error ? <div className="analysis-error">{error}</div> : null}

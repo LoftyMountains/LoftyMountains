@@ -148,4 +148,5 @@ export type StreamEvent =
   | { type: "news"; data: NewsItem[] }
   | { type: "market"; data: MarketSnapshot }
   | { type: "sources"; data: SourceStatus[] }
+  | { type: "analysis"; data: { generatedAt: string; windows: number[] } }
   | { type: "heartbeat"; data: { serverTime: string } };
