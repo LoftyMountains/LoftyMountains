@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, ScanSearch, Share2 } from "lucide-react";
-import type { AnalysisPayload, AnalysisWindow, AnalysisWord } from "../../shared/types";
+import type { AnalysisLink, AnalysisNode, AnalysisPayload, AnalysisRelationshipType, AnalysisWindow, AnalysisWord } from "../../shared/types";
 import { formatClock, formatFull } from "../lib/time";
 import { RelatedNewsDialog, type RelatedNewsSelection } from "./RelatedNewsDialog";
 import { StockNetwork } from "./StockNetwork";
 import { WordCloud } from "./WordCloud";
 import { apiUrl } from "../lib/api";
+import { confidenceRank, relationshipLabels } from "../lib/relationships";
 
 const analysisWindows = [
   { hours: 1, label: "近 1 小时" },
@@ -22,13 +23,16 @@ interface CachedAnalysis {
   fetchedAt: number;
 }
 
-const relationshipLegend = [
-  ["news-cooccurrence", "新闻共现"],
-  ["stock-cooccurrence", "股票共现"],
-  ["company-industry", "公司行业"],
-  ["policy-impact", "政策影响"],
-  ["supply-chain", "供应链事件"],
+const relationshipTypes = [
+  "news-cooccurrence",
+  "stock-cooccurrence",
+  "company-industry",
+  "policy-impact",
+  "supply-chain",
 ] as const;
+
+type RelationshipTypeFilter = AnalysisRelationshipType | "all";
+type ConfidenceFilter = AnalysisLink["confidence"];
 
 function coverageLabel(coverageRatio: number | null, complete: boolean | null) {
   if (coverageRatio === null || complete === null) return "覆盖率未知";
@@ -49,6 +53,9 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
   const [selectedHours, setSelectedHours] = useState(24);
   const [selectedWord, setSelectedWord] = useState<AnalysisWord | null>(null);
   const [relatedSelection, setRelatedSelection] = useState<RelatedNewsSelection | null>(null);
+  const [relationshipType, setRelationshipType] = useState<RelationshipTypeFilter>("all");
+  const [minimumConfidence, setMinimumConfidence] = useState<ConfidenceFilter>("low");
+  const [minimumEvents, setMinimumEvents] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const openTimer = useRef<number | null>(null);
@@ -123,6 +130,25 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
   const activeSummary = latestPayload?.summaries.find((summary) => summary.hours === selectedHours) || null;
   const dataThrough = active?.actualTo || activeSummary?.actualTo || latestPayload?.latestEventAt || null;
   const coverageDetail = coverageDetailFor(active || null);
+  const graphLinks = useMemo(() => (active?.links || []).map((link) => ({
+    ...link,
+    evidence: Array.isArray(link.evidence) ? link.evidence : [],
+  })), [active]);
+  const filteredLinks = useMemo(() => graphLinks.filter((link) => (
+    (relationshipType === "all" || link.type === relationshipType)
+    && confidenceRank[link.confidence] >= confidenceRank[minimumConfidence]
+    && link.cooccurrenceCount >= minimumEvents
+  )), [graphLinks, minimumConfidence, minimumEvents, relationshipType]);
+  const filteredNodes = useMemo(() => {
+    const linkedNodeIds = new Set(filteredLinks.flatMap((link) => [link.source, link.target]));
+    return (active?.nodes || []).filter((node) => linkedNodeIds.has(node.id));
+  }, [active, filteredLinks]);
+  const nodeLabels = useMemo(() => new Map((active?.nodes || []).map((node) => [node.id, node.label])), [active]);
+  const graphEmptyMessage = !active && loading
+    ? "正在加载关系证据"
+    : graphLinks.length
+      ? "没有符合当前筛选条件的关系"
+      : "当前窗口关系证据不足";
 
   useEffect(() => {
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
@@ -151,6 +177,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
     openTimer.current = null;
     cancelPreviewClose();
+    if (window.matchMedia("(hover: none)").matches) return;
     closeTimer.current = window.setTimeout(() => {
       setRelatedSelection(null);
       closeTimer.current = null;
@@ -162,9 +189,21 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
     openRelatedPreview({ type: "topic", value: word.text, label: word.text, anchor });
   }, [openRelatedPreview]);
 
-  const previewStock = useCallback((node: { label: string; symbol?: string }, anchor: { x: number; y: number }) => {
-    openRelatedPreview({ type: "stock", value: node.symbol || node.label, label: node.label, anchor });
-  }, [openRelatedPreview]);
+  const previewStock = useCallback((node: AnalysisNode, anchor: { x: number; y: number }) => {
+    const relationships = filteredLinks
+      .filter((link) => link.source === node.id || link.target === node.id)
+      .map((link) => {
+        const counterpartId = link.source === node.id ? link.target : link.source;
+        return { link, counterpartLabel: nodeLabels.get(counterpartId) || counterpartId.replace(/^[^:]+:/, "") };
+      });
+    openRelatedPreview({
+      type: "stock",
+      value: node.symbol || node.label,
+      label: node.label,
+      anchor,
+      relationships,
+    });
+  }, [filteredLinks, nodeLabels, openRelatedPreview]);
 
   const closeRelatedNews = useCallback(() => {
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
@@ -252,20 +291,45 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
             <div className="network-legend"><span><i className="is-stock" />股票</span><span><i className="is-topic" />主题</span></div>
           </header>
           {coverageDetail ? <div className="analysis-coverage-detail">{coverageDetail}</div> : null}
+          <div className="relationship-filters" aria-label="关联关系筛选">
+            <label>
+              <span>关系类型</span>
+              <select value={relationshipType} onChange={(event) => setRelationshipType(event.target.value as RelationshipTypeFilter)}>
+                <option value="all">全部关系</option>
+                {relationshipTypes.map((type) => <option value={type} key={type}>{relationshipLabels[type]}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>最低置信度</span>
+              <select value={minimumConfidence} onChange={(event) => setMinimumConfidence(event.target.value as ConfidenceFilter)}>
+                <option value="low">全部</option>
+                <option value="medium">中及以上</option>
+                <option value="high">仅高置信</option>
+              </select>
+            </label>
+            <label>
+              <span>最少共同事件</span>
+              <select value={minimumEvents} onChange={(event) => setMinimumEvents(Number(event.target.value))}>
+                {[1, 2, 3, 5].map((count) => <option value={count} key={count}>{count} 个</option>)}
+              </select>
+            </label>
+            <output aria-live="polite">{filteredLinks.length} / {graphLinks.length} 条</output>
+          </div>
           <div className="network-edge-legend" aria-label="关系类型图例">
-            {relationshipLegend.map(([type, label]) => <span key={type}><i className={`is-${type}`} />{label}</span>)}
+            {relationshipTypes.map((type) => <span key={type}><i className={`is-${type}`} />{relationshipLabels[type]}</span>)}
           </div>
           <StockNetwork
-            nodes={active?.nodes || []}
-            links={active?.links || []}
+            nodes={filteredNodes}
+            links={filteredLinks}
+            emptyMessage={graphEmptyMessage}
             onPreview={previewStock}
             onPreviewEnd={closeRelatedPreview}
           />
           <footer>
-            <span>股票 {active?.nodes.filter((node) => node.type === "stock").length || 0}</span>
-            <span>主题 {active?.nodes.filter((node) => node.type === "topic").length || 0}</span>
-            <span>关联 {active?.links.length || 0}</span>
-            <span>高置信 {active?.links.filter((link) => link.confidence === "high").length || 0}</span>
+            <span>股票 {filteredNodes.filter((node) => node.type === "stock").length}</span>
+            <span>主题 {filteredNodes.filter((node) => node.type === "topic").length}</span>
+            <span>关联 {filteredLinks.length}</span>
+            <span>高置信 {filteredLinks.filter((link) => link.confidence === "high").length}</span>
           </footer>
         </section>
       </div>

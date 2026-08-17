@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
 import { RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import type { AnalysisLink, AnalysisNode } from "../../shared/types";
+import { confidenceLabels, relationshipLabels, sourceLabels } from "../lib/relationships";
+import { formatFull } from "../lib/time";
 
 type SimNode = AnalysisNode & d3.SimulationNodeDatum;
 type SimLink = Omit<AnalysisLink, "source" | "target"> & d3.SimulationLinkDatum<SimNode> & {
@@ -12,6 +14,7 @@ type SimLink = Omit<AnalysisLink, "source" | "target"> & d3.SimulationLinkDatum<
 interface StockNetworkProps {
   nodes: AnalysisNode[];
   links: AnalysisLink[];
+  emptyMessage?: string;
   onPreview?: (node: AnalysisNode, anchor: { x: number; y: number }) => void;
   onPreviewEnd?: () => void;
 }
@@ -22,25 +25,17 @@ interface ZoomControls {
   reset: () => void;
 }
 
-const relationshipLabels: Record<AnalysisLink["type"], string> = {
-  "news-cooccurrence": "新闻共现",
-  "stock-cooccurrence": "股票共现",
-  "company-industry": "公司行业",
-  "policy-impact": "政策影响",
-  "supply-chain": "供应链事件",
-};
+interface LinkPreview {
+  link: AnalysisLink;
+  x: number;
+  y: number;
+}
 
 const directionLabels: Record<AnalysisNode["direction"], string> = {
   positive: "偏正面",
   negative: "偏负面",
   mixed: "方向混合",
   neutral: "方向中性",
-};
-
-const confidenceLabels: Record<AnalysisLink["confidence"], string> = {
-  high: "高置信",
-  medium: "中置信",
-  low: "低置信",
 };
 
 function signedPercent(value: number | null) {
@@ -55,12 +50,30 @@ function reactionLabel(node: AnalysisNode) {
   return `超额收益 5分钟 ${signedPercent(reaction.excessReturn5m)} · 30分钟 ${signedPercent(reaction.excessReturn30m)} · 1日 ${signedPercent(reaction.excessReturn1d)} · ${reaction.sampleSize} 个样本`;
 }
 
-export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNetworkProps) {
+function nodeId(value: string | SimNode) {
+  return typeof value === "string" ? value : value.id;
+}
+
+function analysisLink(link: SimLink): AnalysisLink {
+  return {
+    source: nodeId(link.source),
+    target: nodeId(link.target),
+    type: link.type,
+    cooccurrenceCount: link.cooccurrenceCount,
+    npmi: link.npmi,
+    confidence: link.confidence,
+    weight: link.weight,
+    evidence: link.evidence || [],
+  };
+}
+
+export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系证据不足", onPreview, onPreviewEnd }: StockNetworkProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const controlsRef = useRef<ZoomControls | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [selected, setSelected] = useState<AnalysisNode | null>(null);
+  const [linkPreview, setLinkPreview] = useState<LinkPreview | null>(null);
 
   useEffect(() => {
     const element = wrapRef.current;
@@ -74,14 +87,17 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
 
   useEffect(() => {
     setSelected(null);
-  }, [nodes]);
+    setLinkPreview(null);
+  }, [links, nodes]);
 
   useEffect(() => {
-    if (!svgRef.current || !size.width || !size.height || !nodes.length) return;
-    const graphNodes: SimNode[] = nodes.map((node) => ({ ...node }));
-    const graphLinks: SimLink[] = links.map((link) => ({ ...link }));
+    if (!svgRef.current || !size.width || !size.height) return;
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
+    controlsRef.current = null;
+    if (!nodes.length || !links.length) return;
+    const graphNodes: SimNode[] = nodes.map((node) => ({ ...node }));
+    const graphLinks: SimLink[] = links.map((link) => ({ ...link }));
     svg.attr("viewBox", `0 0 ${size.width} ${size.height}`);
     svg.append("title").text("快讯主题与关联股票网络");
     svg.append("desc").text("方形节点表示股票，圆形节点表示新闻主题；关系线区分新闻共现、股票共现、公司行业、政策影响和供应链事件。 ");
@@ -106,18 +122,71 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
     linkSelection.append("title")
       .text((link) => `${relationshipLabels[link.type]} · 共同事件 ${link.cooccurrenceCount} · NPMI ${link.npmi.toFixed(2)} · ${confidenceLabels[link.confidence]}`);
 
+    const showLinkPreview = (event: MouseEvent | FocusEvent, link: SimLink) => {
+      const bounds = wrapRef.current?.getBoundingClientRect();
+      const targetBounds = (event.currentTarget as SVGLineElement).getBoundingClientRect();
+      if (!bounds) return;
+      const mouseEvent = event as MouseEvent;
+      const x = Number.isFinite(mouseEvent.clientX) && mouseEvent.clientX > 0
+        ? mouseEvent.clientX - bounds.left
+        : targetBounds.left + targetBounds.width / 2 - bounds.left;
+      const y = Number.isFinite(mouseEvent.clientY) && mouseEvent.clientY > 0
+        ? mouseEvent.clientY - bounds.top
+        : targetBounds.top + targetBounds.height / 2 - bounds.top;
+      linkSelection.classed("is-active", (candidate) => candidate === link);
+      setLinkPreview({ link: analysisLink(link), x, y });
+    };
+    const hideLinkPreview = () => {
+      linkSelection.classed("is-active", false);
+      setLinkPreview(null);
+    };
+    const linkHitSelection = root.append("g")
+      .attr("class", "network-link-hits")
+      .selectAll("line")
+      .data(graphLinks)
+      .join("line")
+      .attr("stroke", "transparent")
+      .attr("stroke-width", (link) => Math.max(12, 4 + link.weight * 6))
+      .attr("tabindex", 0)
+      .attr("role", "button")
+      .attr("aria-label", (link) => `${relationshipLabels[link.type]}，共同事件 ${link.cooccurrenceCount}，NPMI ${link.npmi.toFixed(2)}，${confidenceLabels[link.confidence]}`)
+      .style("pointer-events", "stroke")
+      .style("cursor", "help")
+      .on("mouseenter", showLinkPreview)
+      .on("mousemove", showLinkPreview)
+      .on("mouseleave", hideLinkPreview)
+      .on("focus", showLinkPreview)
+      .on("blur", hideLinkPreview)
+      .on("click", (event, link) => {
+        event.stopPropagation();
+        showLinkPreview(event, link);
+      });
+    svg.on("click", () => hideLinkPreview());
+
     const nodeSelection = root.append("g")
       .attr("class", "network-nodes")
       .selectAll<SVGGElement, SimNode>("g")
       .data(graphNodes)
       .join("g")
       .attr("class", (node) => `network-node is-${node.type}`)
+      .attr("tabindex", 0)
+      .attr("role", "button")
+      .attr("aria-label", (node) => `${node.type === "stock" ? "股票" : "主题"} ${node.label}，${node.mentions} 个事件，${directionLabels[node.direction]}`)
       .style("cursor", (node) => node.type === "stock" ? "pointer" : "grab")
       .on("mouseenter", (event, node) => {
         setSelected(node);
         if (node.type === "stock") onPreview?.(node, { x: event.clientX, y: event.clientY });
       })
       .on("mouseleave", (_event, node) => {
+        if (node.type === "stock") onPreviewEnd?.();
+      })
+      .on("focus", (event, node) => {
+        setSelected(node);
+        if (node.type !== "stock") return;
+        const bounds = (event.currentTarget as SVGGElement).getBoundingClientRect();
+        onPreview?.(node, { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 });
+      })
+      .on("blur", (_event, node) => {
         if (node.type === "stock") onPreviewEnd?.();
       })
       .on("click", (event, node) => {
@@ -162,6 +231,11 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
           .attr("y1", (link) => (link.source as SimNode).y || 0)
           .attr("x2", (link) => (link.target as SimNode).x || 0)
           .attr("y2", (link) => (link.target as SimNode).y || 0);
+        linkHitSelection
+          .attr("x1", (link) => (link.source as SimNode).x || 0)
+          .attr("y1", (link) => (link.source as SimNode).y || 0)
+          .attr("x2", (link) => (link.target as SimNode).x || 0)
+          .attr("y2", (link) => (link.target as SimNode).y || 0);
         nodeSelection.attr("transform", (node) => `translate(${node.x || 0},${node.y || 0})`);
         labelSelection
           .attr("x", (node) => (node.x || 0) > size.width - 86 ? (node.type === "stock" ? -17 : -13) : (node.type === "stock" ? 17 : 13))
@@ -186,6 +260,7 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
 
     return () => {
       simulation.stop();
+      svg.on("click", null);
       controlsRef.current = null;
     };
   }, [links, nodes, onPreview, onPreviewEnd, size]);
@@ -198,7 +273,33 @@ export function StockNetwork({ nodes, links, onPreview, onPreviewEnd }: StockNet
         <button type="button" className="icon-button" onClick={() => controlsRef.current?.reset()} title="重置视图" aria-label="重置视图"><RotateCcw size={16} /></button>
       </div>
       <svg ref={svgRef} className="network-svg" role="img" aria-label="主题与股票关联图" />
-      {!nodes.length ? <div className="analysis-empty">当前窗口尚无股票关联数据</div> : null}
+      {!links.length ? <div className="analysis-empty">{emptyMessage}</div> : null}
+      {linkPreview ? (
+        <div
+          className="network-link-preview"
+          style={{
+            left: Math.max(10, Math.min(linkPreview.x + 12, Math.max(10, size.width - 340))),
+            top: Math.max(10, Math.min(linkPreview.y + 12, Math.max(10, size.height - 260))),
+          }}
+        >
+          <header>
+            <strong>{relationshipLabels[linkPreview.link.type]}</strong>
+            <span>{confidenceLabels[linkPreview.link.confidence]}</span>
+          </header>
+          <p>{nodes.find((node) => node.id === linkPreview.link.source)?.label || linkPreview.link.source} ↔ {nodes.find((node) => node.id === linkPreview.link.target)?.label || linkPreview.link.target}</p>
+          <div><span>共同事件 {linkPreview.link.cooccurrenceCount}</span><span>NPMI {linkPreview.link.npmi.toFixed(2)}</span></div>
+          <ul>
+            {!linkPreview.link.evidence.length ? <li className="is-empty">证据标题暂不可用</li> : null}
+            {linkPreview.link.evidence.map((evidence) => (
+              <li key={evidence.eventId}>
+                <time dateTime={evidence.publishedAt}>{formatFull(evidence.publishedAt)}</time>
+                <span>{evidence.title}</span>
+                <small>{evidence.sources.map((source) => sourceLabels[source]).join(" · ")}</small>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {selected ? (
         <div className="network-selection">
           <i className={`is-${selected.type}`} />

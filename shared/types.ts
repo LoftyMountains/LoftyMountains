@@ -56,6 +56,13 @@ export interface AnalysisNode {
 
 export type AnalysisRelationshipType = "news-cooccurrence" | "stock-cooccurrence" | "company-industry" | "policy-impact" | "supply-chain";
 
+export interface AnalysisLinkEvidence {
+  eventId: string;
+  title: string;
+  publishedAt: string;
+  sources: SourceId[];
+}
+
 export interface AnalysisLink {
   source: string;
   target: string;
@@ -64,6 +71,7 @@ export interface AnalysisLink {
   npmi: number;
   confidence: "low" | "medium" | "high";
   type: AnalysisRelationshipType;
+  evidence: AnalysisLinkEvidence[];
 }
 
 export interface AnalysisWindow {
