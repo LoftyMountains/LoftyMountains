@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BootstrapPayload, MarketSnapshot, NewsItem, ReplayPayload, SourceId, SourceStatus } from "../shared/types";
 import { Header } from "./components/Header";
 import { MarketChart } from "./components/MarketChart";
@@ -50,6 +50,38 @@ export function App() {
   const [speed, setSpeed] = useState(2);
   const [now, setNow] = useState(Date.now());
   const [theme, setTheme] = useState<ThemeMode>(readThemeMode);
+  const latestLiveNewsAt = useRef<string | null>(null);
+  const syncingLiveNews = useRef(false);
+
+  const mergeLiveNews = useCallback((incoming: NewsItem[]) => {
+    setLiveNews((current) => {
+      const merged = uniqueNews([...incoming, ...current])
+        .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
+        .slice(0, 500);
+      latestLiveNewsAt.current = merged[0]?.publishedAt || null;
+      return merged;
+    });
+  }, []);
+
+  const syncLiveNews = useCallback(async () => {
+    if (syncingLiveNews.current) return;
+    syncingLiveNews.current = true;
+    try {
+      const params = new URLSearchParams({ limit: "200", _: String(Date.now()) });
+      if (latestLiveNewsAt.current) {
+        const overlap = new Date(new Date(latestLiveNewsAt.current).getTime() - 60_000).toISOString();
+        params.set("from", overlap);
+      }
+      const response = await fetch(`${apiUrl("/api/news")}?${params}`);
+      if (!response.ok) return;
+      const payload = await response.json() as { items: NewsItem[] };
+      mergeLiveNews(payload.items);
+    } catch {
+      // EventSource will keep reconnecting; the next foreground sync retries missed items.
+    } finally {
+      syncingLiveNews.current = false;
+    }
+  }, [mergeLiveNews]);
 
   useEffect(() => {
     applyThemeMode(theme);
@@ -69,7 +101,7 @@ export function App() {
       })
       .then((payload) => {
         if (cancelled) return;
-        setLiveNews(payload.news);
+        mergeLiveNews(payload.news);
         setMarket(payload.market);
         setSources(payload.sources);
       })
@@ -77,19 +109,35 @@ export function App() {
       .finally(() => !cancelled && setLoading(false));
 
     const events = new EventSource(apiUrl("/api/stream"));
-    events.onopen = () => setConnected(true);
+    events.onopen = () => {
+      setConnected(true);
+      void syncLiveNews();
+    };
     events.onerror = () => setConnected(false);
     events.addEventListener("news", (event) => {
       const incoming = JSON.parse((event as MessageEvent<string>).data) as NewsItem[];
-      setLiveNews((current) => uniqueNews([...incoming, ...current]).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, 500));
+      mergeLiveNews(incoming);
     });
     events.addEventListener("market", (event) => setMarket(JSON.parse((event as MessageEvent<string>).data) as MarketSnapshot));
     events.addEventListener("sources", (event) => setSources(JSON.parse((event as MessageEvent<string>).data) as SourceStatus[]));
+
+    const syncWhenVisible = () => {
+      if (document.visibilityState === "visible") void syncLiveNews();
+    };
+    const syncWhenOnline = () => void syncLiveNews();
+    const fallbackTimer = window.setInterval(syncWhenVisible, 30_000);
+    document.addEventListener("visibilitychange", syncWhenVisible);
+    window.addEventListener("online", syncWhenOnline);
+    window.addEventListener("pageshow", syncWhenOnline);
     return () => {
       cancelled = true;
+      window.clearInterval(fallbackTimer);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+      window.removeEventListener("online", syncWhenOnline);
+      window.removeEventListener("pageshow", syncWhenOnline);
       events.close();
     };
-  }, []);
+  }, [mergeLiveNews, syncLiveNews]);
 
   const replayTimeline = useMemo(() => {
     if (!replay) return [];
