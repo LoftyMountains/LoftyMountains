@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BootstrapPayload, MarketSnapshot, NewsItem, ReplayPayload, SourceId, SourceStatus } from "../shared/types";
 import { Header } from "./components/Header";
+import { MarketChart } from "./components/MarketChart";
 import { NewsFeed, type ViewMode } from "./components/NewsFeed";
 import { QueryPanel } from "./components/QueryPanel";
 import { ReplayBar } from "./components/ReplayBar";
@@ -14,21 +15,6 @@ function uniqueNews(items: NewsItem[]) {
 }
 
 const InsightsDashboard = lazy(() => import("./components/InsightsDashboard").then((module) => ({ default: module.InsightsDashboard })));
-const MarketChart = lazy(() => import("./components/MarketChart").then((module) => ({ default: module.MarketChart })));
-
-function MarketFallback() {
-  return (
-    <section className="market-panel" aria-label="沪深300分时图" aria-busy="true">
-      <div className="section-heading market-heading">
-        <div><div className="eyebrow">CHINA MARKET · 000300</div><h1>沪深300</h1></div>
-        <div className="market-quote"><strong>--</strong><span>正在加载行情</span></div>
-      </div>
-      <div className="chart-toolbar"><div className="chart-state"><span>分时行情</span><i /></div></div>
-      <div className="chart-wrap"><div className="chart-empty"><span>正在加载分时图</span></div></div>
-      <div className="chart-footer"><span>等待首次更新</span><span>数据源：行情聚合</span></div>
-    </section>
-  );
-}
 
 function InsightsFallback() {
   return (
@@ -364,9 +350,7 @@ export function App() {
             onOpenQuery={() => { setQueryError(null); setQueryOpen(true); }}
           />
           <div className="market-column">
-            <Suspense fallback={<MarketFallback />}>
-              <MarketChart market={visibleMarket} replaying={mode === "replay"} />
-            </Suspense>
+            <MarketChart market={visibleMarket} replaying={mode === "replay"} />
             {mode === "replay" ? (
               <ReplayBar
                 current={replayIndex}

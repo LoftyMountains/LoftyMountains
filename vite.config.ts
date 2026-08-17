@@ -18,7 +18,6 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes("recharts") || id.includes("victory-vendor")) return "market-charts";
           if (id.includes("lucide-react")) return "icons";
           if (id.includes("react") || id.includes("scheduler")) return "react-vendor";
         },
