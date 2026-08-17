@@ -1,7 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BootstrapPayload, MarketSnapshot, NewsItem, ReplayPayload, SourceId, SourceStatus } from "../shared/types";
 import { Header } from "./components/Header";
-import { MarketChart } from "./components/MarketChart";
 import { NewsFeed, type ViewMode } from "./components/NewsFeed";
 import { QueryPanel } from "./components/QueryPanel";
 import { ReplayBar } from "./components/ReplayBar";
@@ -15,6 +14,21 @@ function uniqueNews(items: NewsItem[]) {
 }
 
 const InsightsDashboard = lazy(() => import("./components/InsightsDashboard").then((module) => ({ default: module.InsightsDashboard })));
+const MarketChart = lazy(() => import("./components/MarketChart").then((module) => ({ default: module.MarketChart })));
+
+function MarketFallback() {
+  return (
+    <section className="market-panel" aria-label="沪深300分时图" aria-busy="true">
+      <div className="section-heading market-heading">
+        <div><div className="eyebrow">CHINA MARKET · 000300</div><h1>沪深300</h1></div>
+        <div className="market-quote"><strong>--</strong><span>正在加载行情</span></div>
+      </div>
+      <div className="chart-toolbar"><div className="chart-state"><span>分时行情</span><i /></div></div>
+      <div className="chart-wrap"><div className="chart-empty"><span>正在加载分时图</span></div></div>
+      <div className="chart-footer"><span>等待首次更新</span><span>数据源：行情聚合</span></div>
+    </section>
+  );
+}
 
 function InsightsFallback() {
   return (
@@ -53,6 +67,7 @@ export function App() {
   const [analysisRevision, setAnalysisRevision] = useState<string | null>(null);
   const latestLiveNewsAt = useRef<string | null>(null);
   const liveNewsSyncController = useRef<AbortController | null>(null);
+  const lastLiveNewsSyncAt = useRef(0);
 
   const mergeLiveNews = useCallback((incoming: NewsItem[]) => {
     setLiveNews((current) => {
@@ -74,6 +89,7 @@ export function App() {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 8_000);
     liveNewsSyncController.current = controller;
+    lastLiveNewsSyncAt.current = Date.now();
     try {
       const params = new URLSearchParams({ limit: "200", _: String(Date.now()) });
       if (latestLiveNewsAt.current) {
@@ -108,7 +124,8 @@ export function App() {
     let cancelled = false;
     let events: EventSource | null = null;
     let lastStreamActivityAt = Date.now();
-    fetch(apiUrl("/api/bootstrap"))
+    let lastRecoveryAt = 0;
+    fetch(apiUrl("/api/bootstrap"), { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error("初始化失败");
         return await response.json() as BootstrapPayload;
@@ -140,7 +157,7 @@ export function App() {
       nextEvents.onopen = () => {
         if (events !== nextEvents) return;
         markStreamActive(nextEvents);
-        void syncLiveNews();
+        if (Date.now() - lastLiveNewsSyncAt.current > 5_000) void syncLiveNews();
       };
       nextEvents.onerror = () => {
         if (events === nextEvents) setConnected(false);
@@ -170,11 +187,19 @@ export function App() {
 
     const recoverLiveConnection = () => {
       if (document.visibilityState !== "visible") return;
+      const recoveryAt = Date.now();
+      if (recoveryAt - lastRecoveryAt < 1_000) return;
+      lastRecoveryAt = recoveryAt;
       void syncLiveNews(true);
       connectStream(true);
     };
     const syncWhenVisible = () => {
       if (document.visibilityState === "visible") recoverLiveConnection();
+    };
+    const syncOnInteraction = () => {
+      if (document.visibilityState === "visible" && Date.now() - lastLiveNewsSyncAt.current > 10_000) {
+        void syncLiveNews();
+      }
     };
     const watchdog = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
@@ -182,14 +207,18 @@ export function App() {
       if (Date.now() - lastStreamActivityAt > 35_000) connectStream(true);
     }, 15_000);
     document.addEventListener("visibilitychange", syncWhenVisible);
+    document.addEventListener("pointerdown", syncOnInteraction, { passive: true });
     window.addEventListener("online", recoverLiveConnection);
     window.addEventListener("pageshow", recoverLiveConnection);
+    window.addEventListener("focus", recoverLiveConnection);
     return () => {
       cancelled = true;
       window.clearInterval(watchdog);
       document.removeEventListener("visibilitychange", syncWhenVisible);
+      document.removeEventListener("pointerdown", syncOnInteraction);
       window.removeEventListener("online", recoverLiveConnection);
       window.removeEventListener("pageshow", recoverLiveConnection);
+      window.removeEventListener("focus", recoverLiveConnection);
       liveNewsSyncController.current?.abort();
       liveNewsSyncController.current = null;
       events?.close();
@@ -335,7 +364,9 @@ export function App() {
             onOpenQuery={() => { setQueryError(null); setQueryOpen(true); }}
           />
           <div className="market-column">
-            <MarketChart market={visibleMarket} replaying={mode === "replay"} />
+            <Suspense fallback={<MarketFallback />}>
+              <MarketChart market={visibleMarket} replaying={mode === "replay"} />
+            </Suspense>
             {mode === "replay" ? (
               <ReplayBar
                 current={replayIndex}
