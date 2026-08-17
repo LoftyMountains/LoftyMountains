@@ -23,6 +23,7 @@ export function MarketChart({ market, replaying }: MarketChartProps) {
   const [showAverage, setShowAverage] = useState(true);
   const points = market?.points || [];
   const latest = points.at(-1);
+  const hasAverage = points.some((point) => point.average !== null);
   const positive = (latest?.change || 0) >= 0;
   const domain = useMemo<[number, number]>(() => {
     if (!points.length) return [0, 1];
@@ -55,9 +56,11 @@ export function MarketChart({ market, replaying }: MarketChartProps) {
           <span>{replaying ? "历史时间轴" : market?.delayed ? "行情延迟" : "分时行情"}</span>
           <i className={market?.delayed ? "is-delayed" : ""} />
         </div>
-        <button className={`legend-toggle ${showAverage ? "is-active" : ""}`} onClick={() => setShowAverage((value) => !value)} aria-pressed={showAverage}>
-          <i />均价线
-        </button>
+        {hasAverage ? (
+          <button className={`legend-toggle ${showAverage ? "is-active" : ""}`} onClick={() => setShowAverage((value) => !value)} aria-pressed={showAverage}>
+            <i />均价线
+          </button>
+        ) : null}
       </div>
 
       <div className="chart-wrap">
@@ -87,7 +90,7 @@ export function MarketChart({ market, replaying }: MarketChartProps) {
               <Tooltip content={<ChartTooltip previousClose={market?.previousClose || 0} />} cursor={{ stroke: "var(--chart-cursor)", strokeWidth: 1 }} />
               <Bar yAxisId="volume" dataKey="volume" fill="var(--chart-volume)" opacity={0.28} isAnimationActive={false} />
               {market?.previousClose ? <ReferenceLine yAxisId="price" y={market.previousClose} stroke="var(--chart-reference)" strokeDasharray="4 4" /> : null}
-              {showAverage ? <Line yAxisId="price" type="monotone" dataKey="average" stroke="var(--gold)" strokeWidth={1.2} dot={false} connectNulls isAnimationActive={false} /> : null}
+              {hasAverage && showAverage ? <Line yAxisId="price" type="monotone" dataKey="average" stroke="var(--gold)" strokeWidth={1.2} dot={false} connectNulls isAnimationActive={false} /> : null}
               <Line yAxisId="price" type="monotone" dataKey="price" stroke="var(--red)" strokeWidth={2} dot={false} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
@@ -98,7 +101,7 @@ export function MarketChart({ market, replaying }: MarketChartProps) {
 
       <div className="chart-footer">
         <span><Clock3 size={13} />{market?.updatedAt && market.updatedAt !== new Date(0).toISOString() ? `更新于 ${formatFull(market.updatedAt)}` : "等待首次更新"}</span>
-        <span>数据源：东方财富 · 交易数据或有延迟</span>
+        <span title={market?.switchReason || undefined}>数据源：{market?.sourceLabel || "行情聚合"}{market?.latencyMs === null || market?.latencyMs === undefined ? "" : ` · ${market.latencyMs}ms`} · 交易数据或有延迟</span>
       </div>
     </section>
   );

@@ -111,6 +111,8 @@ export interface MarketPoint {
   changePercent: number;
 }
 
+export type MarketSourceId = "tencent" | "sina";
+
 export interface MarketSnapshot {
   symbol: "000300";
   name: "沪深300";
@@ -118,6 +120,11 @@ export interface MarketSnapshot {
   points: MarketPoint[];
   delayed: boolean;
   updatedAt: string;
+  source: MarketSourceId | null;
+  sourceLabel: string | null;
+  lastSuccessAt: string | null;
+  latencyMs: number | null;
+  switchReason: string | null;
 }
 
 export interface SourceStatus {
