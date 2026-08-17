@@ -73,8 +73,8 @@ export interface AnalysisWindow {
   to: string;
   actualFrom: string | null;
   actualTo: string | null;
-  coverageRatio: number;
-  complete: boolean;
+  coverageRatio: number | null;
+  complete: boolean | null;
   itemCount: number;
   eventCount: number;
   baselineEventCount: number;
@@ -89,8 +89,8 @@ export interface AnalysisWindowSummary {
   label: string;
   actualFrom: string | null;
   actualTo: string | null;
-  coverageRatio: number;
-  complete: boolean;
+  coverageRatio: number | null;
+  complete: boolean | null;
   eventCount: number;
   topTopic: string | null;
 }

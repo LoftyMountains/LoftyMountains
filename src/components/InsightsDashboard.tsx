@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, ScanSearch, Share2 } from "lucide-react";
-import type { AnalysisPayload, AnalysisWord } from "../../shared/types";
+import type { AnalysisPayload, AnalysisWindow, AnalysisWord } from "../../shared/types";
 import { formatClock, formatFull } from "../lib/time";
 import { RelatedNewsDialog, type RelatedNewsSelection } from "./RelatedNewsDialog";
 import { StockNetwork } from "./StockNetwork";
@@ -29,6 +29,20 @@ const relationshipLegend = [
   ["policy-impact", "政策影响"],
   ["supply-chain", "供应链事件"],
 ] as const;
+
+function coverageLabel(coverageRatio: number | null, complete: boolean | null) {
+  if (coverageRatio === null || complete === null) return "覆盖率未知";
+  return `${Math.round(coverageRatio * 100)}% / ${complete ? "完整" : "积累中"}`;
+}
+
+function coverageDetailFor(window: AnalysisWindow | null) {
+  if (!window) return null;
+  if (window.coverageRatio === null) return "覆盖记录尚未建立";
+  if (window.complete) return null;
+  return window.actualFrom && window.actualTo
+    ? `实际覆盖 ${formatFull(window.actualFrom)} - ${formatFull(window.actualTo)}`
+    : "当前没有可用覆盖记录";
+}
 
 export function InsightsDashboard({ revision }: { revision: string | null }) {
   const [cache, setCache] = useState<Record<number, CachedAnalysis>>({});
@@ -107,12 +121,8 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
     .map((entry) => entry.payload)
     .sort((left, right) => right.generatedAt.localeCompare(left.generatedAt))[0] || null, [cache]);
   const activeSummary = latestPayload?.summaries.find((summary) => summary.hours === selectedHours) || null;
-  const dataThrough = active?.actualTo || activeSummary?.actualTo || null;
-  const coverageDetail = active && !active.complete
-    ? active.actualFrom && active.actualTo
-      ? `实际覆盖 ${formatFull(active.actualFrom)} - ${formatFull(active.actualTo)}`
-      : "当前没有可用覆盖记录"
-    : null;
+  const dataThrough = active?.actualTo || activeSummary?.actualTo || latestPayload?.latestEventAt || null;
+  const coverageDetail = coverageDetailFor(active || null);
 
   useEffect(() => {
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
@@ -199,7 +209,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
               <span>{option.label}</span>
               <strong>{summary?.eventCount ?? "--"}</strong>
               <small>
-                <b>{summary ? `${Math.round(summary.coverageRatio * 100)}% / ${summary.complete ? "完整" : "积累中"}` : "覆盖率 --"}</b>
+                <b>{summary ? coverageLabel(summary.coverageRatio, summary.complete) : "覆盖率 --"}</b>
                 <span>{summary?.topTopic || "暂无热点"}</span>
               </small>
             </button>
