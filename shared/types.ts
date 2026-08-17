@@ -97,6 +97,7 @@ export interface AnalysisWindowSummary {
 
 export interface AnalysisPayload {
   generatedAt: string;
+  latestEventAt: string | null;
   summaries: AnalysisWindowSummary[];
   windows: AnalysisWindow[];
 }
