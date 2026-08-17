@@ -621,6 +621,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .network-selection span:last-child { margin-left: auto; white-space: nowrap; }
 .network-legend { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 9px; }
 .network-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.network-header-tools { display: flex; align-items: center; gap: 12px; }
+.network-view-switch { height: 30px; display: inline-grid; grid-template-columns: 1fr 1fr; padding: 2px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface-2); }
+.network-view-switch button { min-width: 50px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 7px; border: 0; border-radius: 2px; background: transparent; color: var(--muted); font-size: 9px; cursor: pointer; }
+.network-view-switch button:hover { color: var(--text-2); }
+.network-view-switch button.is-active { background: var(--surface-3); color: var(--text); }
 .network-edge-legend { min-height: 28px; display: flex; flex: 0 0 auto; align-items: center; justify-content: center; flex-wrap: wrap; gap: 5px 12px; padding: 5px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; }
 .network-edge-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .network-edge-legend i { width: 16px; height: 0; display: inline-block; border-top: 2px solid var(--network-link); }
@@ -648,6 +653,32 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .network-link-preview li time { grid-row: 1 / span 2; color: var(--muted); font-size: 8px; font-variant-numeric: tabular-nums; }
 .network-link-preview li > span { min-width: 0; overflow: hidden; font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .network-link-preview li small { color: var(--muted); font-size: 8px; }
+.relationship-list { min-height: 280px; flex: 1 1 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--line-strong) transparent; }
+.relationship-list-item { border-bottom: 1px solid var(--line); }
+.relationship-list-item summary { padding: 11px 16px; color: var(--muted); cursor: pointer; }
+.relationship-list-item summary::marker { color: var(--gold); }
+.relationship-list-item summary:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.relationship-list-item[open] summary { background: var(--surface-2); }
+.relationship-list-summary { width: calc(100% - 8px); display: inline-grid; grid-template-columns: minmax(180px, 1fr) auto minmax(175px, auto); align-items: center; gap: 10px; vertical-align: middle; }
+.relationship-list-pair { min-width: 0; display: inline-flex; align-items: center; gap: 7px; }
+.relationship-list-pair strong { min-width: 0; display: grid; overflow: hidden; color: var(--text); font-size: 11px; }
+.relationship-list-pair strong span, .relationship-list-pair strong small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relationship-list-pair strong small { color: var(--gold); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; font-weight: 500; }
+.relationship-list-pair i { flex: 0 0 auto; color: var(--muted); font-style: normal; }
+.relationship-list-type { padding-left: 7px; border-left: 2px solid var(--network-link); color: var(--text-2); font-size: 9px; white-space: nowrap; }
+.relationship-list-type.is-stock-cooccurrence { border-color: var(--red-soft); }
+.relationship-list-type.is-company-industry { border-color: var(--green); }
+.relationship-list-type.is-policy-impact { border-color: var(--blue); }
+.relationship-list-type.is-supply-chain { border-color: var(--gold); }
+.relationship-list-metrics { color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.relationship-list-evidence { padding: 0 16px 12px 34px; background: var(--strip); }
+.relationship-list-evidence > p { margin: 0; padding-top: 10px; color: var(--muted); font-size: 9px; }
+.relationship-list-evidence ul { margin: 0; padding: 0; list-style: none; }
+.relationship-list-evidence li { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.relationship-list-evidence li:last-child { border-bottom: 0; }
+.relationship-list-evidence time, .relationship-list-evidence span { color: var(--muted); font-size: 8px; }
+.relationship-list-evidence strong { min-width: 0; overflow-wrap: anywhere; color: var(--news-title); font-size: 10px; line-height: 1.4; }
+.relationship-list-empty { min-height: 280px; flex: 1 1 0; display: grid; place-content: center; color: var(--muted); font-size: 11px; text-align: center; }
 .analysis-empty { position: absolute; inset: 0; display: grid; place-content: center; color: var(--muted); font-size: 11px; text-align: center; }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .38; } }
@@ -752,10 +783,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .relationship-filters output { margin-left: 2px; }
   .network-link-preview li { grid-template-columns: 1fr; }
   .network-link-preview li time { grid-row: auto; }
+  .network-legend { display: none; }
+  .network-view-switch button { min-width: 44px; padding-inline: 5px; }
+  .relationship-list { min-height: 390px; flex-basis: 390px; }
+  .relationship-list-summary { grid-template-columns: minmax(0, 1fr) auto; }
+  .relationship-list-metrics { grid-column: 1 / -1; text-align: left; }
+  .relationship-list-evidence { padding-inline: 18px 10px; }
+  .relationship-list-evidence li { grid-template-columns: 1fr; gap: 3px; }
 }
 
 @media (hover: none) and (max-width: 840px) {
-  .related-news-dialog { top: 50% !important; right: 10px; left: 10px !important; width: auto !important; transform: translateY(-50%); }
+  .related-news-dialog { right: 10px; left: 10px !important; width: auto !important; max-height: 46dvh; transform: none; }
+  .related-news-dialog.has-tabs .related-news-list, .relationship-evidence-list { min-height: 0; }
 }
 
 @media (max-width: 380px) {

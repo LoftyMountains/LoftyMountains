@@ -12,6 +12,7 @@ interface WordCloudProps {
   words: AnalysisWord[];
   selected: string | null;
   onPreview: (word: AnalysisWord, anchor: { x: number; y: number }) => void;
+  onTogglePreview: (word: AnalysisWord, anchor: { x: number; y: number }) => void;
   onPreviewEnd: () => void;
 }
 
@@ -22,7 +23,7 @@ const directionLabels: Record<AnalysisWord["direction"], string> = {
   neutral: "方向中性",
 };
 
-export function WordCloud({ words, selected, onPreview, onPreviewEnd }: WordCloudProps) {
+export function WordCloud({ words, selected, onPreview, onTogglePreview, onPreviewEnd }: WordCloudProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [placed, setPlaced] = useState<CloudWord[]>([]);
@@ -92,7 +93,7 @@ export function WordCloud({ words, selected, onPreview, onPreviewEnd }: WordClou
             onPreview(word, { x: rect.right, y: rect.top });
           }}
           onBlur={onPreviewEnd}
-          onClick={(event) => onPreview(word, { x: event.clientX, y: event.clientY })}
+          onClick={(event) => onTogglePreview(word, { x: event.clientX, y: event.clientY })}
           aria-pressed={selected === word.text}
           title={`${word.text} · ${word.count} 个事件 · 前窗 ${word.baselineCount} · 突发度 ${word.burst.toFixed(2)} · 来源多样性 ${Math.round(word.sourceDiversity * 100)}% · ${directionLabels[word.direction]} · ${word.example}`}
         >

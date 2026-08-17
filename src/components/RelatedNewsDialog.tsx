@@ -67,12 +67,18 @@ export function RelatedNewsDialog({ selection, from, to, onClose, onPointerEnter
 
   const position = useMemo(() => {
     const width = Math.min(540, Math.max(296, window.innerWidth - 24));
-    const height = Math.min(768, window.innerHeight - 24);
+    const compactTouch = window.innerWidth <= 840 && window.matchMedia("(hover: none)").matches;
+    const height = compactTouch ? Math.floor(window.innerHeight * 0.46) : Math.min(768, window.innerHeight - 24);
     const preferredLeft = selection.anchor.x + 14;
     const left = Math.max(12, preferredLeft + width <= window.innerWidth - 12
       ? preferredLeft
       : selection.anchor.x - width - 14);
-    const top = Math.max(12, Math.min(selection.anchor.y - 28, window.innerHeight - height - 12));
+    const preferredBelow = selection.anchor.y + 14;
+    const top = compactTouch
+      ? preferredBelow + height <= window.innerHeight - 12
+        ? preferredBelow
+        : Math.max(12, selection.anchor.y - height - 14)
+      : Math.max(12, Math.min(selection.anchor.y - 28, window.innerHeight - height - 12));
     return { left, top, width };
   }, [selection.anchor.x, selection.anchor.y]);
   const relationships = selection.relationships || [];

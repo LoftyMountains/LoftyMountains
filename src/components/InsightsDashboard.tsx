@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, ScanSearch, Share2 } from "lucide-react";
+import { ListTree, RefreshCw, ScanSearch, Share2 } from "lucide-react";
 import type { AnalysisLink, AnalysisNode, AnalysisPayload, AnalysisRelationshipType, AnalysisWindow, AnalysisWord } from "../../shared/types";
 import { formatClock, formatFull } from "../lib/time";
 import { RelatedNewsDialog, type RelatedNewsSelection } from "./RelatedNewsDialog";
+import { RelationshipList } from "./RelationshipList";
 import { StockNetwork } from "./StockNetwork";
 import { WordCloud } from "./WordCloud";
 import { apiUrl } from "../lib/api";
@@ -33,6 +34,11 @@ const relationshipTypes = [
 
 type RelationshipTypeFilter = AnalysisRelationshipType | "all";
 type ConfidenceFilter = AnalysisLink["confidence"];
+type NetworkView = "graph" | "list";
+
+function relatedSelectionKey(selection: RelatedNewsSelection) {
+  return `${selection.type}:${selection.value}`;
+}
 
 function coverageLabel(coverageRatio: number | null, complete: boolean | null) {
   if (coverageRatio === null || complete === null) return "覆盖率未知";
@@ -56,10 +62,12 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
   const [relationshipType, setRelationshipType] = useState<RelationshipTypeFilter>("all");
   const [minimumConfidence, setMinimumConfidence] = useState<ConfidenceFilter>("low");
   const [minimumEvents, setMinimumEvents] = useState(1);
+  const [networkView, setNetworkView] = useState<NetworkView>("graph");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
+  const pinnedPreviewKey = useRef<string | null>(null);
   const cacheRef = useRef(cache);
   const loadingWindows = useRef(new Set<number>());
 
@@ -155,9 +163,15 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
     if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
     openTimer.current = null;
     closeTimer.current = null;
+    pinnedPreviewKey.current = null;
     setSelectedWord(null);
     setRelatedSelection(null);
   }, [selectedHours]);
+
+  useEffect(() => {
+    pinnedPreviewKey.current = null;
+    setRelatedSelection(null);
+  }, [minimumConfidence, minimumEvents, networkView, relationshipType]);
 
   const cancelPreviewClose = useCallback(() => {
     if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
@@ -165,6 +179,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
   }, []);
 
   const openRelatedPreview = useCallback((selection: RelatedNewsSelection) => {
+    if (pinnedPreviewKey.current) return;
     cancelPreviewClose();
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
     openTimer.current = window.setTimeout(() => {
@@ -173,11 +188,25 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
     }, 120);
   }, [cancelPreviewClose]);
 
+  const toggleRelatedPreview = useCallback((selection: RelatedNewsSelection) => {
+    cancelPreviewClose();
+    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
+    openTimer.current = null;
+    const key = relatedSelectionKey(selection);
+    if (pinnedPreviewKey.current === key) {
+      pinnedPreviewKey.current = null;
+      setRelatedSelection(null);
+      return;
+    }
+    pinnedPreviewKey.current = key;
+    setRelatedSelection(selection);
+  }, [cancelPreviewClose]);
+
   const closeRelatedPreview = useCallback(() => {
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
     openTimer.current = null;
     cancelPreviewClose();
-    if (window.matchMedia("(hover: none)").matches) return;
+    if (pinnedPreviewKey.current) return;
     closeTimer.current = window.setTimeout(() => {
       setRelatedSelection(null);
       closeTimer.current = null;
@@ -189,26 +218,34 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
     openRelatedPreview({ type: "topic", value: word.text, label: word.text, anchor });
   }, [openRelatedPreview]);
 
-  const previewStock = useCallback((node: AnalysisNode, anchor: { x: number; y: number }) => {
+  const toggleWordPreview = useCallback((word: AnalysisWord, anchor: { x: number; y: number }) => {
+    setSelectedWord(word);
+    toggleRelatedPreview({ type: "topic", value: word.text, label: word.text, anchor });
+  }, [toggleRelatedPreview]);
+
+  const stockSelection = useCallback((node: AnalysisNode, anchor: { x: number; y: number }): RelatedNewsSelection => {
     const relationships = filteredLinks
       .filter((link) => link.source === node.id || link.target === node.id)
       .map((link) => {
         const counterpartId = link.source === node.id ? link.target : link.source;
         return { link, counterpartLabel: nodeLabels.get(counterpartId) || counterpartId.replace(/^[^:]+:/, "") };
       });
-    openRelatedPreview({
-      type: "stock",
-      value: node.symbol || node.label,
-      label: node.label,
-      anchor,
-      relationships,
-    });
-  }, [filteredLinks, nodeLabels, openRelatedPreview]);
+    return { type: "stock", value: node.symbol || node.label, label: node.label, anchor, relationships };
+  }, [filteredLinks, nodeLabels]);
+
+  const previewStock = useCallback((node: AnalysisNode, anchor: { x: number; y: number }) => {
+    openRelatedPreview(stockSelection(node, anchor));
+  }, [openRelatedPreview, stockSelection]);
+
+  const toggleStockPreview = useCallback((node: AnalysisNode, anchor: { x: number; y: number }) => {
+    toggleRelatedPreview(stockSelection(node, anchor));
+  }, [stockSelection, toggleRelatedPreview]);
 
   const closeRelatedNews = useCallback(() => {
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
     cancelPreviewClose();
     openTimer.current = null;
+    pinnedPreviewKey.current = null;
     setRelatedSelection(null);
   }, [cancelPreviewClose]);
 
@@ -268,6 +305,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
             words={active?.words || []}
             selected={selectedWord?.text || null}
             onPreview={previewWord}
+            onTogglePreview={toggleWordPreview}
             onPreviewEnd={closeRelatedPreview}
           />
           <footer>
@@ -287,8 +325,14 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
 
         <section className="analysis-panel network-panel" aria-labelledby="stock-network-title">
           <header>
-            <div><Share2 size={17} /><h2 id="stock-network-title">关联股票图</h2></div>
-            <div className="network-legend"><span><i className="is-stock" />股票</span><span><i className="is-topic" />主题</span></div>
+            <div><Share2 size={17} /><h2 id="stock-network-title">{networkView === "graph" ? "关联股票图" : "关联关系列表"}</h2></div>
+            <div className="network-header-tools">
+              <div className="network-legend"><span><i className="is-stock" />股票</span><span><i className="is-topic" />主题</span></div>
+              <div className="network-view-switch" role="group" aria-label="关联数据视图">
+                <button type="button" className={networkView === "graph" ? "is-active" : ""} aria-pressed={networkView === "graph"} onClick={() => setNetworkView("graph")} title="图谱视图"><Share2 size={13} /><span>图谱</span></button>
+                <button type="button" className={networkView === "list" ? "is-active" : ""} aria-pressed={networkView === "list"} onClick={() => setNetworkView("list")} title="列表视图"><ListTree size={13} /><span>列表</span></button>
+              </div>
+            </div>
           </header>
           {coverageDetail ? <div className="analysis-coverage-detail">{coverageDetail}</div> : null}
           <div className="relationship-filters" aria-label="关联关系筛选">
@@ -318,13 +362,16 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
           <div className="network-edge-legend" aria-label="关系类型图例">
             {relationshipTypes.map((type) => <span key={type}><i className={`is-${type}`} />{relationshipLabels[type]}</span>)}
           </div>
-          <StockNetwork
-            nodes={filteredNodes}
-            links={filteredLinks}
-            emptyMessage={graphEmptyMessage}
-            onPreview={previewStock}
-            onPreviewEnd={closeRelatedPreview}
-          />
+          {networkView === "graph" ? (
+            <StockNetwork
+              nodes={filteredNodes}
+              links={filteredLinks}
+              emptyMessage={graphEmptyMessage}
+              onPreview={previewStock}
+              onTogglePreview={toggleStockPreview}
+              onPreviewEnd={closeRelatedPreview}
+            />
+          ) : <RelationshipList nodes={filteredNodes} links={filteredLinks} emptyMessage={graphEmptyMessage} />}
           <footer>
             <span>股票 {filteredNodes.filter((node) => node.type === "stock").length}</span>
             <span>主题 {filteredNodes.filter((node) => node.type === "topic").length}</span>

@@ -16,6 +16,7 @@ interface StockNetworkProps {
   links: AnalysisLink[];
   emptyMessage?: string;
   onPreview?: (node: AnalysisNode, anchor: { x: number; y: number }) => void;
+  onTogglePreview?: (node: AnalysisNode, anchor: { x: number; y: number }) => void;
   onPreviewEnd?: () => void;
 }
 
@@ -67,10 +68,11 @@ function analysisLink(link: SimLink): AnalysisLink {
   };
 }
 
-export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系证据不足", onPreview, onPreviewEnd }: StockNetworkProps) {
+export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系证据不足", onPreview, onTogglePreview, onPreviewEnd }: StockNetworkProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const controlsRef = useRef<ZoomControls | null>(null);
+  const pinnedLinkRef = useRef<string | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [selected, setSelected] = useState<AnalysisNode | null>(null);
   const [linkPreview, setLinkPreview] = useState<LinkPreview | null>(null);
@@ -98,6 +100,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
     if (!nodes.length || !links.length) return;
     const graphNodes: SimNode[] = nodes.map((node) => ({ ...node }));
     const graphLinks: SimLink[] = links.map((link) => ({ ...link }));
+    pinnedLinkRef.current = null;
     svg.attr("viewBox", `0 0 ${size.width} ${size.height}`);
     svg.append("title").text("快讯主题与关联股票网络");
     svg.append("desc").text("方形节点表示股票，圆形节点表示新闻主题；关系线区分新闻共现、股票共现、公司行业、政策影响和供应链事件。 ");
@@ -122,7 +125,18 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
     linkSelection.append("title")
       .text((link) => `${relationshipLabels[link.type]} · 共同事件 ${link.cooccurrenceCount} · NPMI ${link.npmi.toFixed(2)} · ${confidenceLabels[link.confidence]}`);
 
-    const showLinkPreview = (event: MouseEvent | FocusEvent, link: SimLink) => {
+    const clearLinkPreview = () => {
+      pinnedLinkRef.current = null;
+      linkSelection.classed("is-active", false);
+      setLinkPreview(null);
+    };
+    const showLinkPreview = (event: MouseEvent | FocusEvent, link: SimLink, pin = false) => {
+      const linkKey = `${link.type}:${nodeId(link.source)}:${nodeId(link.target)}`;
+      if (pin && pinnedLinkRef.current === linkKey) {
+        clearLinkPreview();
+        return;
+      }
+      if (!pin && pinnedLinkRef.current) return;
       const bounds = wrapRef.current?.getBoundingClientRect();
       const targetBounds = (event.currentTarget as SVGLineElement).getBoundingClientRect();
       if (!bounds) return;
@@ -133,10 +147,12 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       const y = Number.isFinite(mouseEvent.clientY) && mouseEvent.clientY > 0
         ? mouseEvent.clientY - bounds.top
         : targetBounds.top + targetBounds.height / 2 - bounds.top;
+      if (pin) pinnedLinkRef.current = linkKey;
       linkSelection.classed("is-active", (candidate) => candidate === link);
       setLinkPreview({ link: analysisLink(link), x, y });
     };
     const hideLinkPreview = () => {
+      if (pinnedLinkRef.current) return;
       linkSelection.classed("is-active", false);
       setLinkPreview(null);
     };
@@ -159,9 +175,15 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .on("blur", hideLinkPreview)
       .on("click", (event, link) => {
         event.stopPropagation();
-        showLinkPreview(event, link);
+        showLinkPreview(event, link, true);
+      })
+      .on("keydown", (event, link) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        event.stopPropagation();
+        showLinkPreview(event, link, true);
       });
-    svg.on("click", () => hideLinkPreview());
+    svg.on("click", clearLinkPreview);
 
     const nodeSelection = root.append("g")
       .attr("class", "network-nodes")
@@ -190,8 +212,18 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
         if (node.type === "stock") onPreviewEnd?.();
       })
       .on("click", (event, node) => {
+        event.stopPropagation();
         setSelected(node);
-        if (node.type === "stock") onPreview?.(node, { x: event.clientX, y: event.clientY });
+        if (node.type === "stock") onTogglePreview?.(node, { x: event.clientX, y: event.clientY });
+      })
+      .on("keydown", (event, node) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        event.stopPropagation();
+        setSelected(node);
+        if (node.type !== "stock") return;
+        const bounds = (event.currentTarget as SVGGElement).getBoundingClientRect();
+        onTogglePreview?.(node, { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 });
       });
 
     nodeSelection.filter((node) => node.type === "stock")
@@ -261,9 +293,10 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
     return () => {
       simulation.stop();
       svg.on("click", null);
+      pinnedLinkRef.current = null;
       controlsRef.current = null;
     };
-  }, [links, nodes, onPreview, onPreviewEnd, size]);
+  }, [links, nodes, onPreview, onPreviewEnd, onTogglePreview, size]);
 
   return (
     <div className="stock-network" ref={wrapRef}>
