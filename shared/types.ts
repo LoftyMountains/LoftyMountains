@@ -141,6 +141,9 @@ export interface RuntimeInfo {
   retentionDays: number;
   serverTime: string;
   timezone: string;
+  gitCommit: string;
+  buildTime: string | null;
+  startedAt: string;
 }
 
 export interface BootstrapPayload {
