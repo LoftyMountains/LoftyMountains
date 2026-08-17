@@ -52,7 +52,7 @@ export function App() {
   const [theme, setTheme] = useState<ThemeMode>(readThemeMode);
   const [analysisRevision, setAnalysisRevision] = useState<string | null>(null);
   const latestLiveNewsAt = useRef<string | null>(null);
-  const syncingLiveNews = useRef(false);
+  const liveNewsSyncController = useRef<AbortController | null>(null);
 
   const mergeLiveNews = useCallback((incoming: NewsItem[]) => {
     setLiveNews((current) => {
@@ -64,23 +64,34 @@ export function App() {
     });
   }, []);
 
-  const syncLiveNews = useCallback(async () => {
-    if (syncingLiveNews.current) return;
-    syncingLiveNews.current = true;
+  const syncLiveNews = useCallback(async (force = false) => {
+    if (force && liveNewsSyncController.current) {
+      const staleController = liveNewsSyncController.current;
+      liveNewsSyncController.current = null;
+      staleController.abort();
+    }
+    if (liveNewsSyncController.current) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8_000);
+    liveNewsSyncController.current = controller;
     try {
       const params = new URLSearchParams({ limit: "200", _: String(Date.now()) });
       if (latestLiveNewsAt.current) {
         const overlap = new Date(new Date(latestLiveNewsAt.current).getTime() - 60_000).toISOString();
         params.set("from", overlap);
       }
-      const response = await fetch(`${apiUrl("/api/news")}?${params}`);
+      const response = await fetch(`${apiUrl("/api/news")}?${params}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!response.ok) return;
       const payload = await response.json() as { items: NewsItem[] };
       mergeLiveNews(payload.items);
     } catch {
-      // EventSource will keep reconnecting; the next foreground sync retries missed items.
+      // The stream watchdog or next foreground recovery retries missed items.
     } finally {
-      syncingLiveNews.current = false;
+      window.clearTimeout(timeout);
+      if (liveNewsSyncController.current === controller) liveNewsSyncController.current = null;
     }
   }, [mergeLiveNews]);
 
@@ -95,6 +106,8 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let events: EventSource | null = null;
+    let lastStreamActivityAt = Date.now();
     fetch(apiUrl("/api/bootstrap"))
       .then(async (response) => {
         if (!response.ok) throw new Error("初始化失败");
@@ -109,38 +122,77 @@ export function App() {
       .catch((error) => setQueryError(error instanceof Error ? error.message : "初始化失败"))
       .finally(() => !cancelled && setLoading(false));
 
-    const events = new EventSource(apiUrl("/api/stream"));
-    events.onopen = () => {
+    const markStreamActive = (source: EventSource) => {
+      if (events !== source) return false;
+      lastStreamActivityAt = Date.now();
       setConnected(true);
-      void syncLiveNews();
+      return true;
     };
-    events.onerror = () => setConnected(false);
-    events.addEventListener("news", (event) => {
-      const incoming = JSON.parse((event as MessageEvent<string>).data) as NewsItem[];
-      mergeLiveNews(incoming);
-    });
-    events.addEventListener("market", (event) => setMarket(JSON.parse((event as MessageEvent<string>).data) as MarketSnapshot));
-    events.addEventListener("sources", (event) => setSources(JSON.parse((event as MessageEvent<string>).data) as SourceStatus[]));
-    events.addEventListener("analysis", (event) => {
-      const invalidation = JSON.parse((event as MessageEvent<string>).data) as { generatedAt: string };
-      setAnalysisRevision(invalidation.generatedAt);
-    });
 
-    const syncWhenVisible = () => {
-      if (document.visibilityState === "visible") void syncLiveNews();
+    const connectStream = (force = false) => {
+      if (cancelled) return;
+      if (!force && events && events.readyState !== EventSource.CLOSED) return;
+      events?.close();
+      setConnected(false);
+      lastStreamActivityAt = Date.now();
+      const nextEvents = new EventSource(apiUrl("/api/stream"));
+      events = nextEvents;
+      nextEvents.onopen = () => {
+        if (events !== nextEvents) return;
+        markStreamActive(nextEvents);
+        void syncLiveNews();
+      };
+      nextEvents.onerror = () => {
+        if (events === nextEvents) setConnected(false);
+      };
+      nextEvents.addEventListener("heartbeat", () => markStreamActive(nextEvents));
+      nextEvents.addEventListener("news", (event) => {
+        if (!markStreamActive(nextEvents)) return;
+        const incoming = JSON.parse((event as MessageEvent<string>).data) as NewsItem[];
+        mergeLiveNews(incoming);
+      });
+      nextEvents.addEventListener("market", (event) => {
+        if (!markStreamActive(nextEvents)) return;
+        setMarket(JSON.parse((event as MessageEvent<string>).data) as MarketSnapshot);
+      });
+      nextEvents.addEventListener("sources", (event) => {
+        if (!markStreamActive(nextEvents)) return;
+        setSources(JSON.parse((event as MessageEvent<string>).data) as SourceStatus[]);
+      });
+      nextEvents.addEventListener("analysis", (event) => {
+        if (!markStreamActive(nextEvents)) return;
+        const invalidation = JSON.parse((event as MessageEvent<string>).data) as { generatedAt: string };
+        setAnalysisRevision(invalidation.generatedAt);
+      });
     };
-    const syncWhenOnline = () => void syncLiveNews();
-    const fallbackTimer = window.setInterval(syncWhenVisible, 30_000);
+
+    connectStream();
+
+    const recoverLiveConnection = () => {
+      if (document.visibilityState !== "visible") return;
+      void syncLiveNews(true);
+      connectStream(true);
+    };
+    const syncWhenVisible = () => {
+      if (document.visibilityState === "visible") recoverLiveConnection();
+    };
+    const watchdog = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void syncLiveNews();
+      if (Date.now() - lastStreamActivityAt > 35_000) connectStream(true);
+    }, 15_000);
     document.addEventListener("visibilitychange", syncWhenVisible);
-    window.addEventListener("online", syncWhenOnline);
-    window.addEventListener("pageshow", syncWhenOnline);
+    window.addEventListener("online", recoverLiveConnection);
+    window.addEventListener("pageshow", recoverLiveConnection);
     return () => {
       cancelled = true;
-      window.clearInterval(fallbackTimer);
+      window.clearInterval(watchdog);
       document.removeEventListener("visibilitychange", syncWhenVisible);
-      window.removeEventListener("online", syncWhenOnline);
-      window.removeEventListener("pageshow", syncWhenOnline);
-      events.close();
+      window.removeEventListener("online", recoverLiveConnection);
+      window.removeEventListener("pageshow", recoverLiveConnection);
+      liveNewsSyncController.current?.abort();
+      liveNewsSyncController.current = null;
+      events?.close();
     };
   }, [mergeLiveNews, syncLiveNews]);
 
