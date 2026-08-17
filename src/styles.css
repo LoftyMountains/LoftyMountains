@@ -467,6 +467,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 .insights-heading h1 { margin: 4px 0 0; font-size: 20px; line-height: 1.2; letter-spacing: 0; }
 .insights-heading-meta { display: flex; align-items: center; gap: 11px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.insights-times { display: grid; justify-items: end; gap: 3px; font-variant-numeric: tabular-nums; }
 .is-spinning svg { animation: spin .9s linear infinite; }
 
 .analysis-windows {
@@ -496,7 +497,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .analysis-windows > button.is-active { box-shadow: inset 0 -2px var(--gold); background: rgba(208, 168, 102, .055); color: var(--text); }
 .analysis-windows > button span { min-width: 0; overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .analysis-windows > button strong { grid-row: 1 / span 2; grid-column: 2; align-self: center; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 23px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.analysis-windows > button small { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.analysis-windows > button small { min-width: 0; display: flex; align-items: center; gap: 5px; overflow: hidden; color: var(--muted); font-size: 9px; white-space: nowrap; }
+.analysis-windows > button small b { flex: 0 0 auto; color: var(--text-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.analysis-windows > button small span { min-width: 0; overflow: hidden; font-size: inherit; font-weight: 400; text-overflow: ellipsis; }
 .window-skeleton { min-height: 76px; border-right: 1px solid var(--line); background: linear-gradient(90deg, transparent 12%, var(--surface-2) 30%, transparent 50%); background-size: 220% 100%; animation: loading-sweep 1.4s linear infinite; }
 
 .analysis-error { padding: 9px 18px; border-bottom: 1px solid #6f3538; background: rgba(217, 76, 76, .08); color: #ef8585; font-size: 11px; }
@@ -517,6 +520,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .analysis-panel > header svg { color: var(--gold); }
 .analysis-panel h2 { margin: 0; font-size: 13px; letter-spacing: 0; }
 .analysis-panel > header > span { color: var(--muted); font-size: 9px; white-space: nowrap; }
+.analysis-coverage-detail { min-height: 28px; display: flex; flex: 0 0 auto; align-items: center; padding: 5px 18px; border-bottom: 1px solid var(--line); background: var(--strip); color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
 .analysis-panel > footer {
   min-height: 42px;
   flex: 0 0 42px;
@@ -683,10 +687,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .header-insights-button span { display: none; }
   .insights-heading { padding-inline: 14px; }
   .insights-heading h1 { font-size: 17px; }
-  .insights-heading-meta > span { display: none; }
+  .insights-heading { gap: 10px; }
+  .insights-heading-meta { gap: 6px; font-size: 8px; }
+  .insights-times { gap: 2px; }
   .analysis-windows > button { padding-inline: 13px; }
   .analysis-windows > button strong { font-size: 20px; }
   .analysis-panel > header, .analysis-panel > footer { padding-inline: 13px; }
+  .analysis-coverage-detail { padding-inline: 13px; }
   .analysis-panel > header > span { display: none; }
   .analysis-panel > footer { gap: 8px; overflow-x: auto; scrollbar-width: none; }
   .analysis-panel { min-height: 455px; }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, ScanSearch, Share2 } from "lucide-react";
 import type { AnalysisPayload, AnalysisWord } from "../../shared/types";
-import { formatFull } from "../lib/time";
+import { formatClock, formatFull } from "../lib/time";
 import { RelatedNewsDialog, type RelatedNewsSelection } from "./RelatedNewsDialog";
 import { StockNetwork } from "./StockNetwork";
 import { WordCloud } from "./WordCloud";
@@ -103,6 +103,16 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
 
   const payload = cache[selectedHours]?.payload || null;
   const active = useMemo(() => payload?.windows[0], [payload]);
+  const latestPayload = useMemo(() => Object.values(cache)
+    .map((entry) => entry.payload)
+    .sort((left, right) => right.generatedAt.localeCompare(left.generatedAt))[0] || null, [cache]);
+  const activeSummary = latestPayload?.summaries.find((summary) => summary.hours === selectedHours) || null;
+  const dataThrough = active?.actualTo || activeSummary?.actualTo || null;
+  const coverageDetail = active && !active.complete
+    ? active.actualFrom && active.actualTo
+      ? `实际覆盖 ${formatFull(active.actualFrom)} - ${formatFull(active.actualTo)}`
+      : "当前没有可用覆盖记录"
+    : null;
 
   useEffect(() => {
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
@@ -166,14 +176,17 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
           <h1 id="market-insights-title">热点与股票关联</h1>
         </div>
         <div className="insights-heading-meta">
-          {payload ? <span>更新于 {formatFull(payload.generatedAt)}</span> : null}
+          <div className="insights-times">
+            {latestPayload ? <span title={formatFull(latestPayload.generatedAt)}>分析更新于 {formatClock(latestPayload.generatedAt)}</span> : null}
+            {dataThrough ? <span title={formatFull(dataThrough)}>数据截至 {formatClock(dataThrough)}</span> : <span>数据截至 --</span>}
+          </div>
           <button className={`icon-button ${loading ? "is-spinning" : ""}`} onClick={() => void load(selectedHours, true)} title="刷新分析" aria-label="刷新分析"><RefreshCw size={17} /></button>
         </div>
       </header>
 
       <div className="analysis-windows" role="tablist" aria-label="统计时间窗口">
         {analysisWindows.map((option) => {
-          const window = cache[option.hours]?.payload.windows[0];
+          const summary = latestPayload?.summaries.find((item) => item.hours === option.hours);
           return (
             <button
               type="button"
@@ -184,8 +197,11 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
               onClick={() => setSelectedHours(option.hours)}
             >
               <span>{option.label}</span>
-              <strong>{window?.eventCount ?? "--"}</strong>
-              <small>{window ? `${Math.round(window.coverageRatio * 100)}%${window.complete ? " / 完整" : " / 积累中"} · ${window.words[0]?.text || "暂无热点"}` : "选择后加载"}</small>
+              <strong>{summary?.eventCount ?? "--"}</strong>
+              <small>
+                <b>{summary ? `${Math.round(summary.coverageRatio * 100)}% / ${summary.complete ? "完整" : "积累中"}` : "覆盖率 --"}</b>
+                <span>{summary?.topTopic || "暂无热点"}</span>
+              </small>
             </button>
           );
         })}
@@ -198,6 +214,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
             <div><ScanSearch size={17} /><h2 id="word-cloud-title">热点主题云</h2></div>
             {active ? <span>{active.eventCount} 个事件 · {active.sourceCount} 个来源</span> : null}
           </header>
+          {coverageDetail ? <div className="analysis-coverage-detail">{coverageDetail}</div> : null}
           <WordCloud
             words={active?.words || []}
             selected={selectedWord?.text || null}
@@ -224,6 +241,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
             <div><Share2 size={17} /><h2 id="stock-network-title">关联股票图</h2></div>
             <div className="network-legend"><span><i className="is-stock" />股票</span><span><i className="is-topic" />主题</span></div>
           </header>
+          {coverageDetail ? <div className="analysis-coverage-detail">{coverageDetail}</div> : null}
           <div className="network-edge-legend" aria-label="关系类型图例">
             {relationshipLegend.map(([type, label]) => <span key={type}><i className={`is-${type}`} />{label}</span>)}
           </div>

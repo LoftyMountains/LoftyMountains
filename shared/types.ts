@@ -84,8 +84,20 @@ export interface AnalysisWindow {
   links: AnalysisLink[];
 }
 
+export interface AnalysisWindowSummary {
+  hours: number;
+  label: string;
+  actualFrom: string | null;
+  actualTo: string | null;
+  coverageRatio: number;
+  complete: boolean;
+  eventCount: number;
+  topTopic: string | null;
+}
+
 export interface AnalysisPayload {
   generatedAt: string;
+  summaries: AnalysisWindowSummary[];
   windows: AnalysisWindow[];
 }
 
