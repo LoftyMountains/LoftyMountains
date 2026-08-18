@@ -135,7 +135,9 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
   const latestPayload = useMemo(() => Object.values(cache)
     .map((entry) => entry.payload)
     .sort((left, right) => right.generatedAt.localeCompare(left.generatedAt))[0] || null, [cache]);
-  const activeSummary = latestPayload?.summaries.find((summary) => summary.hours === selectedHours) || null;
+  const summariesByHours = useMemo(() => new Map(Object.values(cache).flatMap((entry) => entry.payload.summaries)
+    .map((summary) => [summary.hours, summary] as const)), [cache]);
+  const activeSummary = summariesByHours.get(selectedHours) || null;
   const dataThrough = active?.actualTo || activeSummary?.actualTo || latestPayload?.latestEventAt || null;
   const coverageDetail = coverageDetailFor(active || null);
   const graphLinks = useMemo(() => (active?.links || []).map((link) => ({
@@ -272,7 +274,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
 
       <div className="analysis-windows" role="tablist" aria-label="统计时间窗口">
         {analysisWindows.map((option) => {
-          const summary = latestPayload?.summaries.find((item) => item.hours === option.hours);
+          const summary = summariesByHours.get(option.hours);
           return (
             <button
               type="button"
