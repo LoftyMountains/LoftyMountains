@@ -146,7 +146,17 @@ export function App() {
         if (Date.now() - lastLiveNewsSyncAt.current > 5_000) void syncLiveNews();
       };
       nextEvents.onerror = () => {
-        if (events === nextEvents) setConnected(false);
+        if (events !== nextEvents) return;
+        setConnected(false);
+        const recoveryAt = Date.now();
+        if (recoveryAt - lastRecoveryAt < 1_000) return;
+        lastRecoveryAt = recoveryAt;
+        // Mobile networks commonly drop an SSE connection while keeping the
+        // page visible. Recover the missed items immediately instead of waiting
+        // for the watchdog or the browser's EventSource retry timer.
+        void syncLiveNews(true);
+        // EventSource retries the connection itself; the watchdog only forces a
+        // new instance after a sustained outage to avoid connection churn.
       };
       nextEvents.addEventListener("heartbeat", () => markStreamActive(nextEvents));
       nextEvents.addEventListener("news", (event) => {
@@ -189,9 +199,10 @@ export function App() {
     };
     const watchdog = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      void syncLiveNews();
-      if (Date.now() - lastStreamActivityAt > 35_000) connectStream(true);
-    }, 15_000);
+      const streamStale = Date.now() - lastStreamActivityAt > 12_000;
+      if (streamStale || !events || events.readyState !== EventSource.OPEN) void syncLiveNews();
+      if (Date.now() - lastStreamActivityAt > 20_000) connectStream(true);
+    }, 8_000);
     document.addEventListener("visibilitychange", syncWhenVisible);
     document.addEventListener("pointerdown", syncOnInteraction, { passive: true });
     window.addEventListener("online", recoverLiveConnection);
