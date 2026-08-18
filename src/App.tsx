@@ -17,6 +17,26 @@ function uniqueNews(items: NewsItem[]) {
 const liveNewsSyncIntervalMs = 4_000;
 const liveNewsOverlapMs = 3 * 60_000;
 const streamStaleMs = 35_000;
+const streamClientStorageKey = "jingxing-stream-client";
+
+function liveRecoveryFrom(latestPublishedAt: string | null) {
+  if (!latestPublishedAt) return null;
+  const latestTime = new Date(latestPublishedAt).getTime();
+  const cursorTime = Number.isFinite(latestTime) ? Math.min(latestTime, Date.now()) : Date.now();
+  return new Date(cursorTime - liveNewsOverlapMs).toISOString();
+}
+
+function createStreamClientId() {
+  try {
+    const existing = window.sessionStorage.getItem(streamClientStorageKey);
+    if (existing) return existing;
+    const generated = window.crypto.randomUUID?.() || `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+    window.sessionStorage.setItem(streamClientStorageKey, generated);
+    return generated;
+  } catch {
+    return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  }
+}
 
 const InsightsDashboard = lazy(() => import("./components/InsightsDashboard").then((module) => ({ default: module.InsightsDashboard })));
 
@@ -58,6 +78,7 @@ export function App() {
   const latestLiveNewsAt = useRef<string | null>(null);
   const liveNewsSyncController = useRef<AbortController | null>(null);
   const lastLiveNewsSyncAt = useRef(0);
+  const streamClientId = useRef(createStreamClientId());
 
   const mergeLiveNews = useCallback((incoming: NewsItem[]) => {
     setLiveNews((current) => {
@@ -82,14 +103,8 @@ export function App() {
     lastLiveNewsSyncAt.current = Date.now();
     try {
       const params = new URLSearchParams({ limit: "120" });
-      if (latestLiveNewsAt.current) {
-        // A malformed future timestamp from one provider must not move the
-        // recovery cursor past otherwise valid incoming news.
-        const latestTime = new Date(latestLiveNewsAt.current).getTime();
-        const cursorTime = Number.isFinite(latestTime) ? Math.min(latestTime, Date.now()) : Date.now();
-        const overlap = new Date(cursorTime - liveNewsOverlapMs).toISOString();
-        params.set("from", overlap);
-      }
+      const recoveryFrom = liveRecoveryFrom(latestLiveNewsAt.current);
+      if (recoveryFrom) params.set("from", recoveryFrom);
       const response = await fetch(`${apiUrl("/api/news")}?${params}`, {
         // A stable URL lets the browser validate the API ETag and receive a
         // small 304 response when no new item arrived.
@@ -167,7 +182,11 @@ export function App() {
       events?.close();
       setConnected(false);
       lastStreamActivityAt = Date.now();
-      const nextEvents = new EventSource(apiUrl("/api/stream"));
+      const streamUrl = new URL(apiUrl("/api/stream"), window.location.href);
+      streamUrl.searchParams.set("client", streamClientId.current);
+      const recoveryFrom = liveRecoveryFrom(latestLiveNewsAt.current);
+      if (recoveryFrom) streamUrl.searchParams.set("from", recoveryFrom);
+      const nextEvents = new EventSource(streamUrl.toString());
       events = nextEvents;
       nextEvents.onopen = () => {
         if (events !== nextEvents) return;
