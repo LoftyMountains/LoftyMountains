@@ -14,6 +14,10 @@ function uniqueNews(items: NewsItem[]) {
   return items.filter((item) => !seen.has(item.id) && Boolean(seen.add(item.id)));
 }
 
+const liveNewsSyncIntervalMs = 6_000;
+const liveNewsOverlapMs = 2 * 60_000;
+const streamStaleMs = 35_000;
+
 const InsightsDashboard = lazy(() => import("./components/InsightsDashboard").then((module) => ({ default: module.InsightsDashboard })));
 
 function InsightsFallback() {
@@ -77,13 +81,15 @@ export function App() {
     liveNewsSyncController.current = controller;
     lastLiveNewsSyncAt.current = Date.now();
     try {
-      const params = new URLSearchParams({ limit: "200", _: String(Date.now()) });
+      const params = new URLSearchParams({ limit: "120" });
       if (latestLiveNewsAt.current) {
-        const overlap = new Date(new Date(latestLiveNewsAt.current).getTime() - 60_000).toISOString();
+        const overlap = new Date(new Date(latestLiveNewsAt.current).getTime() - liveNewsOverlapMs).toISOString();
         params.set("from", overlap);
       }
       const response = await fetch(`${apiUrl("/api/news")}?${params}`, {
-        cache: "no-store",
+        // A stable URL lets the browser validate the API ETag and receive a
+        // small 304 response when no new item arrived.
+        cache: "no-cache",
         signal: controller.signal,
       });
       if (!response.ok) return;
@@ -111,6 +117,8 @@ export function App() {
     let events: EventSource | null = null;
     let lastStreamActivityAt = Date.now();
     let lastRecoveryAt = 0;
+    let reconnectAttempt = 0;
+    let reconnectTimer: number | null = null;
     fetch(apiUrl("/api/bootstrap"), { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error("初始化失败");
@@ -132,9 +140,26 @@ export function App() {
       return true;
     };
 
+    const clearReconnectTimer = () => {
+      if (reconnectTimer === null) return;
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    };
+
+    const scheduleStreamReconnect = () => {
+      if (cancelled || document.visibilityState !== "visible" || reconnectTimer !== null) return;
+      const delay = Math.min(30_000, 1_500 * 2 ** Math.min(reconnectAttempt, 4));
+      reconnectAttempt += 1;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connectStream(true);
+      }, delay);
+    };
+
     const connectStream = (force = false) => {
       if (cancelled) return;
       if (!force && events && events.readyState !== EventSource.CLOSED) return;
+      if (force) clearReconnectTimer();
       events?.close();
       setConnected(false);
       lastStreamActivityAt = Date.now();
@@ -142,21 +167,25 @@ export function App() {
       events = nextEvents;
       nextEvents.onopen = () => {
         if (events !== nextEvents) return;
+        reconnectAttempt = 0;
+        clearReconnectTimer();
         markStreamActive(nextEvents);
         if (Date.now() - lastLiveNewsSyncAt.current > 5_000) void syncLiveNews();
       };
       nextEvents.onerror = () => {
         if (events !== nextEvents) return;
+        nextEvents.close();
+        events = null;
         setConnected(false);
         const recoveryAt = Date.now();
-        if (recoveryAt - lastRecoveryAt < 1_000) return;
-        lastRecoveryAt = recoveryAt;
-        // Mobile networks commonly drop an SSE connection while keeping the
-        // page visible. Recover the missed items immediately instead of waiting
-        // for the watchdog or the browser's EventSource retry timer.
-        void syncLiveNews(true);
-        // EventSource retries the connection itself; the watchdog only forces a
-        // new instance after a sustained outage to avoid connection churn.
+        if (recoveryAt - lastRecoveryAt >= 1_000) {
+          lastRecoveryAt = recoveryAt;
+          void syncLiveNews();
+        }
+        // Native EventSource retries every few seconds indefinitely. Mobile
+        // network changes can turn that into a reconnect storm, so retry with a
+        // bounded backoff while the periodic HTTP sync fills any gap.
+        scheduleStreamReconnect();
       };
       nextEvents.addEventListener("heartbeat", () => markStreamActive(nextEvents));
       nextEvents.addEventListener("news", (event) => {
@@ -186,33 +215,31 @@ export function App() {
       const recoveryAt = Date.now();
       if (recoveryAt - lastRecoveryAt < 1_000) return;
       lastRecoveryAt = recoveryAt;
+      reconnectAttempt = 0;
+      clearReconnectTimer();
       void syncLiveNews(true);
       connectStream(true);
     };
     const syncWhenVisible = () => {
       if (document.visibilityState === "visible") recoverLiveConnection();
     };
-    const syncOnInteraction = () => {
-      if (document.visibilityState === "visible" && Date.now() - lastLiveNewsSyncAt.current > 10_000) {
-        void syncLiveNews();
-      }
-    };
+    const liveSyncTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void syncLiveNews();
+    }, liveNewsSyncIntervalMs);
     const watchdog = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      const streamStale = Date.now() - lastStreamActivityAt > 12_000;
-      if (streamStale || !events || events.readyState !== EventSource.OPEN) void syncLiveNews();
-      if (Date.now() - lastStreamActivityAt > 20_000) connectStream(true);
+      if (Date.now() - lastStreamActivityAt > streamStaleMs) connectStream(true);
     }, 8_000);
     document.addEventListener("visibilitychange", syncWhenVisible);
-    document.addEventListener("pointerdown", syncOnInteraction, { passive: true });
     window.addEventListener("online", recoverLiveConnection);
     window.addEventListener("pageshow", recoverLiveConnection);
     window.addEventListener("focus", recoverLiveConnection);
     return () => {
       cancelled = true;
+      clearReconnectTimer();
+      window.clearInterval(liveSyncTimer);
       window.clearInterval(watchdog);
       document.removeEventListener("visibilitychange", syncWhenVisible);
-      document.removeEventListener("pointerdown", syncOnInteraction);
       window.removeEventListener("online", recoverLiveConnection);
       window.removeEventListener("pageshow", recoverLiveConnection);
       window.removeEventListener("focus", recoverLiveConnection);
