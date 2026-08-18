@@ -74,6 +74,15 @@ export interface AnalysisLink {
   evidence: AnalysisLinkEvidence[];
 }
 
+export interface AnalysisWindowMetrics {
+  calculatedAt: string;
+  calculationMs: number;
+  fullCalculationMs: number;
+  responseBytes: number;
+  nodeCount: number;
+  reused: boolean;
+}
+
 export interface AnalysisWindow {
   hours: number;
   label: string;
@@ -90,6 +99,7 @@ export interface AnalysisWindow {
   words: AnalysisWord[];
   nodes: AnalysisNode[];
   links: AnalysisLink[];
+  metrics?: AnalysisWindowMetrics;
 }
 
 export interface AnalysisWindowSummary {
@@ -108,6 +118,11 @@ export interface AnalysisPayload {
   latestEventAt: string | null;
   summaries: AnalysisWindowSummary[];
   windows: AnalysisWindow[];
+  metrics?: {
+    calculationMs: number;
+    responseBytes: number;
+    reusedWindows: number;
+  };
 }
 
 export interface MarketPoint {
