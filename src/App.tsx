@@ -14,8 +14,8 @@ function uniqueNews(items: NewsItem[]) {
   return items.filter((item) => !seen.has(item.id) && Boolean(seen.add(item.id)));
 }
 
-const liveNewsSyncIntervalMs = 6_000;
-const liveNewsOverlapMs = 2 * 60_000;
+const liveNewsSyncIntervalMs = 4_000;
+const liveNewsOverlapMs = 3 * 60_000;
 const streamStaleMs = 35_000;
 
 const InsightsDashboard = lazy(() => import("./components/InsightsDashboard").then((module) => ({ default: module.InsightsDashboard })));
@@ -83,7 +83,11 @@ export function App() {
     try {
       const params = new URLSearchParams({ limit: "120" });
       if (latestLiveNewsAt.current) {
-        const overlap = new Date(new Date(latestLiveNewsAt.current).getTime() - liveNewsOverlapMs).toISOString();
+        // A malformed future timestamp from one provider must not move the
+        // recovery cursor past otherwise valid incoming news.
+        const latestTime = new Date(latestLiveNewsAt.current).getTime();
+        const cursorTime = Number.isFinite(latestTime) ? Math.min(latestTime, Date.now()) : Date.now();
+        const overlap = new Date(cursorTime - liveNewsOverlapMs).toISOString();
         params.set("from", overlap);
       }
       const response = await fetch(`${apiUrl("/api/news")}?${params}`, {
