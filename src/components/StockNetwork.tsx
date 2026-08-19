@@ -48,7 +48,16 @@ function reactionLabel(node: AnalysisNode) {
   const reaction = node.marketReaction;
   if (!reaction) return "";
   if (reaction.status === "unavailable") return `市场反应未验证：${reaction.reason || "行情不足"}`;
-  return `超额收益 5分钟 ${signedPercent(reaction.excessReturn5m)} · 30分钟 ${signedPercent(reaction.excessReturn30m)} · 1日 ${signedPercent(reaction.excessReturn1d)} · ${reaction.sampleSize} 个样本`;
+  const samples = reaction.sampleSizes
+    ? `样本 5分钟 ${reaction.sampleSizes.excessReturn5m} / 30分钟 ${reaction.sampleSizes.excessReturn30m} / 下一交易日 ${reaction.sampleSizes.excessReturn1d}`
+    : `${reaction.sampleSize} 个样本`;
+  const availability = reaction.availableFrom && reaction.availableTo
+    ? ` · 行情覆盖 ${formatFull(reaction.availableFrom)} 至 ${formatFull(reaction.availableTo)}`
+    : "";
+  const confidence = reaction.status === "insufficient"
+    ? `市场反应观察（未达验证门槛${reaction.reason ? `：${reaction.reason}` : ""}）`
+    : "市场反应已验证";
+  return `${confidence} · 超额收益 5分钟 ${signedPercent(reaction.excessReturn5m)} · 30分钟 ${signedPercent(reaction.excessReturn30m)} · 下一交易日 ${signedPercent(reaction.excessReturn1d)} · ${samples}${availability}`;
 }
 
 function nodeId(value: string | SimNode) {

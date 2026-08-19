@@ -34,9 +34,16 @@ export interface AnalysisWord {
 }
 
 export interface AnalysisMarketReaction {
-  status: "verified" | "unavailable";
+  status: "verified" | "insufficient" | "unavailable";
   reason?: string;
   sampleSize: number;
+  sampleSizes?: {
+    excessReturn5m: number;
+    excessReturn30m: number;
+    excessReturn1d: number;
+  };
+  availableFrom?: string | null;
+  availableTo?: string | null;
   excessReturn5m: number | null;
   excessReturn30m: number | null;
   excessReturn1d: number | null;
