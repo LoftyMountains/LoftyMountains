@@ -1,0 +1,33 @@
+name: Monitor Pages HTTPS certificate
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-https-monitor
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify custom-domain TLS
+        id: certificate
+        run: |
+          set -euo pipefail
+          if curl --fail --silent --show-error --max-time 20 https://www.loftymountains.com/ >/dev/null; then
+            echo "ready=true" >>"$GITHUB_OUTPUT"
+            echo "The custom-domain certificate is valid." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=false" >>"$GITHUB_OUTPUT"
+            echo "The custom-domain certificate is still pending; no settings were changed." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Report certificate readiness
+        if: steps.certificate.outputs.ready == 'true'
+        run: echo "The certificate is ready for HTTPS enforcement in GitHub Pages settings." | tee -a "$GITHUB_STEP_SUMMARY"
