@@ -32,6 +32,17 @@ interface LinkPreview {
   y: number;
 }
 
+interface NetworkPosition {
+  x: number;
+  y: number;
+}
+
+const NETWORK_PADDING = 24;
+const NETWORK_CONTROLS_WIDTH = 132;
+const NETWORK_CONTROLS_BOTTOM = 62;
+const NETWORK_SELECTION_HEIGHT = 62;
+const NETWORK_SETTLE_TICKS = 180;
+
 const directionLabels: Record<AnalysisNode["direction"], string> = {
   positive: "偏正面",
   negative: "偏负面",
@@ -77,6 +88,20 @@ function analysisLink(link: SimLink): AnalysisLink {
   };
 }
 
+function constrainPosition(width: number, height: number, x: number, y: number): NetworkPosition {
+  const maxX = Math.max(NETWORK_PADDING, width - NETWORK_PADDING);
+  const maxY = Math.max(NETWORK_PADDING, height - NETWORK_SELECTION_HEIGHT);
+  const constrained = {
+    x: Math.max(NETWORK_PADDING, Math.min(maxX, x)),
+    y: Math.max(NETWORK_PADDING, Math.min(maxY, y)),
+  };
+  const controlsLeft = Math.max(NETWORK_PADDING, width - NETWORK_CONTROLS_WIDTH);
+  if (constrained.x > controlsLeft && constrained.y < NETWORK_CONTROLS_BOTTOM) {
+    constrained.y = Math.min(maxY, NETWORK_CONTROLS_BOTTOM);
+  }
+  return constrained;
+}
+
 export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系证据不足", onPreview, onTogglePreview, onPreviewEnd }: StockNetworkProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -111,11 +136,14 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
     const graphLinks: SimLink[] = links.map((link) => ({ ...link }));
     pinnedLinkRef.current = null;
     svg.attr("viewBox", `0 0 ${size.width} ${size.height}`);
+    svg.attr("data-layout-state", "settling");
     svg.append("title").text("快讯主题与关联股票网络");
     svg.append("desc").text("方形节点表示股票，圆形节点表示新闻主题；关系线区分新闻共现、股票共现、公司行业、政策影响和供应链事件。 ");
     const root = svg.append("g");
+    const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.55, 2.5])
+      .filter((event) => !coarsePointer || event.type === "wheel")
       .on("zoom", (event) => root.attr("transform", event.transform));
     svg.call(zoom);
     controlsRef.current = {
@@ -255,49 +283,78 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
     nodeSelection.append("title")
       .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${node.label}${node.symbol ? ` (${node.symbol})` : ""} · ${node.mentions} 个事件 · ${directionLabels[node.direction]}${node.marketReaction ? ` · ${reactionLabel(node)}` : ""}`);
 
+    const renderGraph = () => {
+      graphNodes.forEach((node) => {
+        const position = constrainPosition(
+          size.width,
+          size.height,
+          node.x ?? size.width / 2,
+          node.y ?? size.height / 2,
+        );
+        node.x = position.x;
+        node.y = position.y;
+      });
+      linkSelection
+        .attr("x1", (link) => (link.source as SimNode).x || 0)
+        .attr("y1", (link) => (link.source as SimNode).y || 0)
+        .attr("x2", (link) => (link.target as SimNode).x || 0)
+        .attr("y2", (link) => (link.target as SimNode).y || 0);
+      linkHitSelection
+        .attr("x1", (link) => (link.source as SimNode).x || 0)
+        .attr("y1", (link) => (link.source as SimNode).y || 0)
+        .attr("x2", (link) => (link.target as SimNode).x || 0)
+        .attr("y2", (link) => (link.target as SimNode).y || 0);
+      nodeSelection.attr("transform", (node) => `translate(${node.x || 0},${node.y || 0})`);
+      labelSelection
+        .attr("x", (node) => (node.x || 0) > size.width - 86 ? (node.type === "stock" ? -17 : -13) : (node.type === "stock" ? 17 : 13))
+        .attr("text-anchor", (node) => (node.x || 0) > size.width - 86 ? "end" : "start");
+    };
+
     const simulation = d3.forceSimulation<SimNode>(graphNodes)
       .force("link", d3.forceLink<SimNode, SimLink>(graphLinks).id((node) => node.id).distance((link) => link.type === "stock-cooccurrence" ? 80 : 66).strength((link) => 0.25 + link.weight * 0.35))
       .force("charge", d3.forceManyBody<SimNode>().strength((node) => node.type === "stock" ? -190 : -105))
       .force("center", d3.forceCenter(size.width / 2, size.height / 2))
       .force("collision", d3.forceCollide<SimNode>().radius((node) => node.type === "stock" ? 32 : 25).iterations(2))
       .alphaDecay(0.045)
-      .on("tick", () => {
-        const padding = 20;
-        graphNodes.forEach((node) => {
-          node.x = Math.max(padding, Math.min(size.width - padding, node.x || size.width / 2));
-          node.y = Math.max(padding, Math.min(size.height - padding, node.y || size.height / 2));
-        });
-        linkSelection
-          .attr("x1", (link) => (link.source as SimNode).x || 0)
-          .attr("y1", (link) => (link.source as SimNode).y || 0)
-          .attr("x2", (link) => (link.target as SimNode).x || 0)
-          .attr("y2", (link) => (link.target as SimNode).y || 0);
-        linkHitSelection
-          .attr("x1", (link) => (link.source as SimNode).x || 0)
-          .attr("y1", (link) => (link.source as SimNode).y || 0)
-          .attr("x2", (link) => (link.target as SimNode).x || 0)
-          .attr("y2", (link) => (link.target as SimNode).y || 0);
-        nodeSelection.attr("transform", (node) => `translate(${node.x || 0},${node.y || 0})`);
-        labelSelection
-          .attr("x", (node) => (node.x || 0) > size.width - 86 ? (node.type === "stock" ? -17 : -13) : (node.type === "stock" ? 17 : 13))
-          .attr("text-anchor", (node) => (node.x || 0) > size.width - 86 ? "end" : "start");
-      });
+      .on("tick", renderGraph)
+      .stop();
 
-    nodeSelection.call(d3.drag<SVGGElement, SimNode>()
-      .on("start", (event, node) => {
-        if (!event.active) simulation.alphaTarget(0.25).restart();
-        node.fx = node.x;
-        node.fy = node.y;
-      })
-      .on("drag", (event, node) => {
-        node.fx = event.x;
-        node.fy = event.y;
-      })
-      .on("end", (event, node) => {
-        if (!event.active) simulation.alphaTarget(0);
-        node.fx = null;
-        node.fy = null;
-      }));
+    for (let tick = 0; tick < NETWORK_SETTLE_TICKS; tick += 1) {
+      simulation.tick();
+      graphNodes.forEach((node) => {
+        const position = constrainPosition(
+          size.width,
+          size.height,
+          node.x ?? size.width / 2,
+          node.y ?? size.height / 2,
+        );
+        node.x = position.x;
+        node.y = position.y;
+      });
+    }
+    renderGraph();
+    svg.attr("data-layout-state", "settled");
+
+    if (!coarsePointer) {
+      nodeSelection.call(d3.drag<SVGGElement, SimNode>()
+        .on("start", (event, node) => {
+          if (!event.active) simulation.alphaTarget(0.25).restart();
+          node.fx = node.x;
+          node.fy = node.y;
+        })
+        .on("drag", (event, node) => {
+          const position = constrainPosition(size.width, size.height, event.x, event.y);
+          node.fx = position.x;
+          node.fy = position.y;
+        })
+        .on("end", (event, node) => {
+          if (!event.active) simulation.alphaTarget(0);
+          node.fx = node.x;
+          node.fy = node.y;
+          simulation.stop();
+          renderGraph();
+        }));
+    }
 
     return () => {
       simulation.stop();
