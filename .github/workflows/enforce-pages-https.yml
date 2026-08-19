@@ -1,0 +1,58 @@
+name: Enforce Pages HTTPS when certificate is ready
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+
+concurrency:
+  group: pages-https
+  cancel-in-progress: true
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect Pages certificate
+        id: certificate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          health="{}"
+          for attempt in 1 2 3; do
+            health=$(gh api "repos/${GITHUB_REPOSITORY}/pages/health")
+            test "$(jq -r '.domain.host // empty' <<<"$health")" = "www.loftymountains.com" && break
+            sleep 5
+          done
+          ready=$(jq -r '
+            .domain.dns_resolves == true and
+            .domain.is_valid == true and
+            .domain.is_served_by_pages == true and
+            .domain.is_https_eligible == true and
+            .domain.responds_to_https == true and
+            .domain.https_error == null and
+            .domain.caa_error == null
+          ' <<<"$health")
+          echo "ready=$ready" >>"$GITHUB_OUTPUT"
+          jq '{host: .domain.host, ready: $ready, https_error: .domain.https_error, caa_error: .domain.caa_error}' \
+            --argjson ready "$ready" <<<"$health" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep waiting for certificate
+        if: steps.certificate.outputs.ready != 'true'
+        run: echo "GitHub Pages certificate is not ready; no settings were changed." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce HTTPS
+        if: steps.certificate.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method PUT "repos/${GITHUB_REPOSITORY}/pages" -F https_enforced=true >/dev/null
+          enforced=$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq '.https_enforced')
+          test "$enforced" = "true"
+          echo "GitHub Pages HTTPS enforcement is enabled." | tee -a "$GITHUB_STEP_SUMMARY"
