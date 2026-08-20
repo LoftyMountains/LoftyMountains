@@ -44,6 +44,11 @@ export interface AnalysisMarketReaction {
   };
   availableFrom?: string | null;
   availableTo?: string | null;
+  benchmark?: {
+    market: "cn" | "hk" | "us";
+    symbol: string;
+    name: string;
+  };
   excessReturn5m: number | null;
   excessReturn30m: number | null;
   excessReturn1d: number | null;
