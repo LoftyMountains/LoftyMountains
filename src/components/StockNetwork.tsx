@@ -40,6 +40,8 @@ interface NetworkPosition {
 const NETWORK_PADDING = 24;
 const NETWORK_CONTROLS_WIDTH = 132;
 const NETWORK_CONTROLS_BOTTOM = 62;
+const NETWORK_NODE_RADIUS = 18;
+const NETWORK_LABEL_MAX_WIDTH = 86;
 const NETWORK_SELECTION_HEIGHT = 62;
 const NETWORK_SETTLE_TICKS = 180;
 
@@ -99,8 +101,9 @@ function constrainPosition(width: number, height: number, x: number, y: number):
     y: Math.max(NETWORK_PADDING, Math.min(maxY, y)),
   };
   const controlsLeft = Math.max(NETWORK_PADDING, width - NETWORK_CONTROLS_WIDTH);
-  if (constrained.x > controlsLeft && constrained.y < NETWORK_CONTROLS_BOTTOM) {
-    constrained.y = Math.min(maxY, NETWORK_CONTROLS_BOTTOM);
+  if (constrained.x > controlsLeft - NETWORK_NODE_RADIUS
+    && constrained.y < NETWORK_CONTROLS_BOTTOM + NETWORK_NODE_RADIUS) {
+    constrained.y = Math.min(maxY, NETWORK_CONTROLS_BOTTOM + NETWORK_NODE_RADIUS);
   }
   return constrained;
 }
@@ -286,6 +289,10 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
     nodeSelection.append("title")
       .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${node.label}${node.symbol ? ` (${node.symbol})` : ""} · ${node.mentions} 个事件 · ${directionLabels[node.direction]}${node.marketReaction ? ` · ${reactionLabel(node)}` : ""}`);
 
+    const labelFacesLeft = (node: SimNode) => (node.x || 0) > size.width - NETWORK_LABEL_MAX_WIDTH
+      || ((node.y || 0) < NETWORK_CONTROLS_BOTTOM + NETWORK_NODE_RADIUS
+        && (node.x || 0) > size.width - NETWORK_CONTROLS_WIDTH - NETWORK_LABEL_MAX_WIDTH);
+
     const renderGraph = () => {
       graphNodes.forEach((node) => {
         const position = constrainPosition(
@@ -309,8 +316,8 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
         .attr("y2", (link) => (link.target as SimNode).y || 0);
       nodeSelection.attr("transform", (node) => `translate(${node.x || 0},${node.y || 0})`);
       labelSelection
-        .attr("x", (node) => (node.x || 0) > size.width - 86 ? (node.type === "stock" ? -17 : -13) : (node.type === "stock" ? 17 : 13))
-        .attr("text-anchor", (node) => (node.x || 0) > size.width - 86 ? "end" : "start");
+        .attr("x", (node) => labelFacesLeft(node) ? (node.type === "stock" ? -17 : -13) : (node.type === "stock" ? 17 : 13))
+        .attr("text-anchor", (node) => labelFacesLeft(node) ? "end" : "start");
     };
 
     const simulation = d3.forceSimulation<SimNode>(graphNodes)
