@@ -163,7 +163,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .selectAll("line")
       .data(graphLinks)
       .join("line")
-      .attr("class", (link) => `network-link is-${link.type}`)
+      .attr("class", (link) => `network-link is-${link.type} confidence-${link.confidence}`)
       .attr("stroke-width", (link) => Math.min(5, 0.7 + link.weight * 2.4 + Math.sqrt(link.cooccurrenceCount) * 0.35));
     linkSelection.append("title")
       .text((link) => `${relationshipLabels[link.type]} · 共同事件 ${link.cooccurrenceCount} · NPMI ${link.npmi.toFixed(2)} · ${confidenceLabels[link.confidence]}`);
@@ -228,17 +228,24 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       });
     svg.on("click", clearLinkPreview);
 
+    const activateNode = (node: SimNode) => {
+      root.selectAll<SVGGElement, SimNode>(".network-node")
+        .classed("is-active", (candidate) => candidate.id === node.id);
+      linkSelection.classed("is-related", (link) => nodeId(link.source) === node.id || nodeId(link.target) === node.id);
+    };
+
     const nodeSelection = root.append("g")
       .attr("class", "network-nodes")
       .selectAll<SVGGElement, SimNode>("g")
       .data(graphNodes)
       .join("g")
-      .attr("class", (node) => `network-node is-${node.type}`)
+      .attr("class", (node) => `network-node is-${node.type} direction-${node.direction}`)
       .attr("tabindex", 0)
       .attr("role", "button")
       .attr("aria-label", (node) => `${node.type === "stock" ? "股票" : "主题"} ${node.label}，${node.mentions} 个事件，${directionLabels[node.direction]}`)
       .style("cursor", (node) => node.type === "stock" ? "pointer" : "grab")
       .on("mouseenter", (event, node) => {
+        activateNode(node);
         setSelected(node);
         if (node.type === "stock") onPreview?.(node, { x: event.clientX, y: event.clientY });
       })
@@ -246,6 +253,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
         if (node.type === "stock") onPreviewEnd?.();
       })
       .on("focus", (event, node) => {
+        activateNode(node);
         setSelected(node);
         if (node.type !== "stock") return;
         const bounds = (event.currentTarget as SVGGElement).getBoundingClientRect();
@@ -271,6 +279,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
 
     nodeSelection.filter((node) => node.type === "stock")
       .append("rect")
+      .attr("class", "network-node-core")
       .attr("x", (node) => -Math.min(14, 7 + Math.sqrt(node.mentions) * 2))
       .attr("y", (node) => -Math.min(14, 7 + Math.sqrt(node.mentions) * 2))
       .attr("width", (node) => Math.min(28, 14 + Math.sqrt(node.mentions) * 4))
@@ -279,7 +288,24 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
 
     nodeSelection.filter((node) => node.type === "topic")
       .append("circle")
+      .attr("class", "network-node-core")
       .attr("r", (node) => Math.min(13, 5 + Math.sqrt(node.mentions) * 1.4));
+
+    nodeSelection.append("circle")
+      .attr("class", "network-direction-dot")
+      .attr("cx", (node) => {
+        const radius = node.type === "stock"
+          ? Math.min(14, 7 + Math.sqrt(node.mentions) * 2)
+          : Math.min(13, 5 + Math.sqrt(node.mentions) * 1.4);
+        return node.type === "stock" ? radius - 1 : radius * .72;
+      })
+      .attr("cy", (node) => {
+        const radius = node.type === "stock"
+          ? Math.min(14, 7 + Math.sqrt(node.mentions) * 2)
+          : Math.min(13, 5 + Math.sqrt(node.mentions) * 1.4);
+        return node.type === "stock" ? -radius + 1 : -radius * .72;
+      })
+      .attr("r", 3.2);
 
     const labelSelection = nodeSelection.append("text")
       .attr("class", "network-label")
@@ -385,7 +411,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       {!links.length ? <div className="analysis-empty">{emptyMessage}</div> : null}
       {linkPreview ? (
         <div
-          className="network-link-preview"
+          className={`network-link-preview is-${linkPreview.link.type} confidence-${linkPreview.link.confidence}`}
           style={{
             left: Math.max(10, Math.min(linkPreview.x + 12, Math.max(10, size.width - 340))),
             top: Math.max(10, Math.min(linkPreview.y + 12, Math.max(10, size.height - 260))),
@@ -410,7 +436,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
         </div>
       ) : null}
       {selected ? (
-        <div className="network-selection">
+        <div className={`network-selection direction-${selected.direction}`}>
           <i className={`is-${selected.type}`} />
           <strong>{selected.label}</strong>
           {selected.symbol ? <span>{selected.symbol}</span> : null}

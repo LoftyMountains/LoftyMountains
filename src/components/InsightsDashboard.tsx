@@ -321,7 +321,19 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
                 <span>{selectedWord.direction === "positive" ? "偏正面" : selectedWord.direction === "negative" ? "偏负面" : selectedWord.direction === "mixed" ? "方向混合" : "方向中性"}</span>
                 <span className="topic-example">{selectedWord.example}</span>
               </>
-            ) : <span>{active ? `共 ${active.words.length} 个高频词` : "暂无统计"}</span>}
+            ) : (
+              <>
+                <span>{active ? `共 ${active.words.length} 个高频词` : "暂无统计"}</span>
+                {active?.words.length ? (
+                  <span className="direction-legend" aria-label="词云方向颜色图例">
+                    <i className="direction-positive" />正面
+                    <i className="direction-negative" />负面
+                    <i className="direction-mixed" />混合
+                    <i className="direction-neutral" />中性
+                  </span>
+                ) : null}
+              </>
+            )}
           </footer>
         </section>
 

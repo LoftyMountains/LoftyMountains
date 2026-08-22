@@ -79,8 +79,9 @@ export function WordCloud({ words, selected, onPreview, onTogglePreview, onPrevi
       {placed.map((word) => (
         <button
           type="button"
-          className={`cloud-word rank-${Math.min(4, Math.ceil(word.rank / 4))} ${selected === word.text ? "is-selected" : ""}`}
+          className={`cloud-word direction-${word.direction} rank-${Math.min(4, Math.ceil(word.rank / 4))} ${selected === word.text ? "is-selected" : ""}`}
           key={word.text}
+          data-direction={word.direction}
           style={{
             left: `calc(50% + ${word.x || 0}px)`,
             top: `calc(50% + ${word.y || 0}px)`,
