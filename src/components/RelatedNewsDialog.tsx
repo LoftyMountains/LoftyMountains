@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowUpRight, CircleAlert, LoaderCircle, Newspaper, PanelRightClose } from "lucide-react";
-import type { AnalysisLink, NewsItem } from "../../shared/types";
+import type { AnalysisLink, NewsItem, SourceId } from "../../shared/types";
 import { apiUrl } from "../lib/api";
 import { confidenceLabels, relationshipLabels, sourceLabels } from "../lib/relationships";
 import { formatFull } from "../lib/time";
@@ -15,6 +15,12 @@ export interface RelatedNewsSelection {
   value: string;
   label: string;
   relationships?: SelectedRelationshipEvidence[];
+  previews?: Array<{
+    id: string;
+    title: string;
+    publishedAt?: string;
+    sources?: SourceId[];
+  }>;
 }
 
 interface RelatedNewsPanelProps {
@@ -66,6 +72,20 @@ function loadRelatedNews(key: string, url: string) {
   return request;
 }
 
+function relatedNewsQuery(from: string, to: string, type: RelatedNewsSelection["type"], value: string) {
+  const params = new URLSearchParams({ from, to, type, value });
+  return {
+    key: params.toString(),
+    url: `${apiUrl("/api/analysis/news")}?${params}`,
+  };
+}
+
+export async function prefetchRelatedNews(from: string, to: string, type: RelatedNewsSelection["type"], value: string) {
+  const query = relatedNewsQuery(from, to, type, value);
+  if (readRelatedNewsCache(query.key)) return;
+  await loadRelatedNews(query.key, query.url);
+}
+
 export function RelatedNewsPanel({ selection, from, to, collapsed, peeking, onCollapse }: RelatedNewsPanelProps) {
   const [items, setItems] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -81,9 +101,8 @@ export function RelatedNewsPanel({ selection, from, to, collapsed, peeking, onCo
       setError(null);
       return;
     }
-    const params = new URLSearchParams({ from, to, type: selection.type, value: selection.value });
-    const key = params.toString();
-    const cached = readRelatedNewsCache(key);
+    const query = relatedNewsQuery(from, to, selection.type, selection.value);
+    const cached = readRelatedNewsCache(query.key);
     if (cached) {
       setItems(cached);
       setLoading(false);
@@ -94,24 +113,21 @@ export function RelatedNewsPanel({ selection, from, to, collapsed, peeking, onCo
     setItems([]);
     setLoading(true);
     setError(null);
-    const timer = window.setTimeout(() => {
-      void loadRelatedNews(key, `${apiUrl("/api/analysis/news")}?${params}`)
-        .then((loadedItems) => {
-          if (active) setItems(loadedItems);
-        })
-        .catch((reason: unknown) => {
-          if (!active) return;
-          setError(reason instanceof Error ? reason.message : "相关快讯加载失败");
-        })
-        .finally(() => {
-          if (active) setLoading(false);
-        });
-    }, 60);
+    void loadRelatedNews(query.key, query.url)
+      .then((loadedItems) => {
+        if (active) setItems(loadedItems);
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setError(reason instanceof Error ? reason.message : "相关快讯加载失败");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
-      window.clearTimeout(timer);
     };
-  }, [from, selection, to]);
+  }, [from, selection?.type, selection?.value, to]);
 
   const relationships = selection?.relationships || [];
   const evidenceCount = new Set(relationships.flatMap((relationship) =>
@@ -119,12 +135,22 @@ export function RelatedNewsPanel({ selection, from, to, collapsed, peeking, onCo
   )).size;
   const evidencePreview = useMemo(() => {
     const seen = new Set<string>();
-    return relationships
-      .flatMap((relationship) => relationship.link.evidence || [])
-      .filter((evidence) => !seen.has(evidence.eventId) && Boolean(seen.add(evidence.eventId)))
-      .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
+    return [
+      ...(selection?.previews || []),
+      ...relationships.flatMap((relationship) => (relationship.link.evidence || []).map((evidence) => ({
+        id: evidence.eventId,
+        title: evidence.title,
+        publishedAt: evidence.publishedAt,
+        sources: evidence.sources,
+      }))),
+    ]
+      .filter((preview) => {
+        const key = preview.title.trim().toLocaleLowerCase("zh-CN");
+        return Boolean(key) && !seen.has(key) && Boolean(seen.add(key));
+      })
+      .sort((left, right) => (right.publishedAt || "").localeCompare(left.publishedAt || ""))
       .slice(0, 8);
-  }, [relationships]);
+  }, [relationships, selection?.previews]);
 
   return (
     <section id="related-news-shell" className={`insight-news-panel ${selection?.type === "stock" ? "has-tabs" : ""} ${collapsed ? "is-collapsed" : ""} ${peeking ? "is-auto-peek" : ""}`} aria-labelledby="related-news-title" aria-live="polite" aria-hidden={collapsed || undefined}>
@@ -154,12 +180,12 @@ export function RelatedNewsPanel({ selection, from, to, collapsed, peeking, onCo
         <div id="related-news-panel" className="related-news-list" role={selection.type === "stock" ? "tabpanel" : undefined} aria-labelledby={selection.type === "stock" ? "related-news-tab" : undefined} aria-busy={loading}>
           {loading && !evidencePreview.length ? <div className="related-news-state"><LoaderCircle className="is-spinning" size={20} /><span>正在汇总相关快讯</span></div> : null}
           {loading && evidencePreview.length ? evidencePreview.map((evidence) => (
-            <article className={`related-news-item is-evidence-preview source-${evidence.sources[0] || "unknown"}`} key={evidence.eventId}>
+            <article className={`related-news-item is-evidence-preview source-${evidence.sources?.[0] || "unknown"}`} key={evidence.id}>
               <i className="related-news-source-mark" />
               <div>
                 <div className="related-news-meta">
-                  <span>{evidence.sources.map((source) => sourceLabels[source]).join(" · ")}</span>
-                  <time dateTime={evidence.publishedAt}>{formatFull(evidence.publishedAt)}</time>
+                  <span>{evidence.sources?.length ? evidence.sources.map((source) => sourceLabels[source]).join(" · ") : "分析样本"}</span>
+                  {evidence.publishedAt ? <time dateTime={evidence.publishedAt}>{formatFull(evidence.publishedAt)}</time> : null}
                 </div>
                 <h3>{evidence.title}</h3>
               </div>

@@ -322,7 +322,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .dynamic-island-details > span { display: grid; gap: 2px; color: #f0f0f2; font-size: 9px; font-weight: 550; white-space: nowrap; }
 .dynamic-island-details small { color: #77777f; font-size: 7px; font-weight: 500; }
 .touchbar-compact, .insights-touchbar-slot { display: none; }
-.dynamic-island.is-touchbar,
+.dynamic-island.is-touchbar {
+  width: 136px;
+  border-color: rgba(255, 255, 255, .17);
+  box-shadow: 0 11px 30px rgba(0, 0, 0, .31), 0 3px 9px rgba(0, 0, 0, .18), 0 0 0 1px rgba(208, 168, 102, .035), inset 0 1px 0 rgba(255, 255, 255, .09);
+}
 .dynamic-island.is-touchbar:hover,
 .dynamic-island.is-touchbar:focus,
 .dynamic-island.is-touchbar:focus-within {
@@ -333,13 +337,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .dynamic-island.is-touchbar::before { right: 8%; left: 8%; opacity: .78; }
 .dynamic-island.is-touchbar .dynamic-island-primary,
 .dynamic-island.is-touchbar .dynamic-island-details { display: none; }
+.dynamic-island.is-touchbar .touchbar-compact {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #e5bb70;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 1;
+  pointer-events: none;
+  transition: opacity .16s ease .12s, transform .28s cubic-bezier(.2, .82, .2, 1);
+}
 .dynamic-island.is-touchbar .insights-touchbar-slot {
   position: absolute;
   inset: 0;
   display: block;
   z-index: 3;
   padding: 5px 9px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(10px);
+  transition: opacity .16s ease, transform .3s cubic-bezier(.2, .82, .2, 1);
 }
+.dynamic-island.is-touchbar:hover .touchbar-compact,
+.dynamic-island.is-touchbar:focus .touchbar-compact,
+.dynamic-island.is-touchbar:focus-within .touchbar-compact { opacity: 0; transform: translateX(-8px); transition-delay: 0s; }
+.dynamic-island.is-touchbar:hover .insights-touchbar-slot,
+.dynamic-island.is-touchbar:focus .insights-touchbar-slot,
+.dynamic-island.is-touchbar:focus-within .insights-touchbar-slot { opacity: 1; pointer-events: auto; transform: none; transition-delay: .1s; }
 .insights-touchbar {
   width: 100%;
   height: 100%;
@@ -1225,7 +1254,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 
 @media (min-width: 1081px) and (max-width: 1320px) {
   .topbar.is-insights-active .github-link, .touchbar-title { display: none; }
-  .dynamic-island.is-touchbar,
   .dynamic-island.is-touchbar:hover,
   .dynamic-island.is-touchbar:focus,
   .dynamic-island.is-touchbar:focus-within { width: min(760px, 56vw); }
@@ -1242,7 +1270,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .dynamic-island:hover,
   .dynamic-island:focus,
   .dynamic-island:focus-within { width: min(370px, calc(100vw - 28px)); }
-  .dynamic-island.is-touchbar,
   .dynamic-island.is-touchbar:hover,
   .dynamic-island.is-touchbar:focus,
   .dynamic-island.is-touchbar:focus-within { width: clamp(360px, 48vw, 520px); }
@@ -1266,27 +1293,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .dynamic-island.is-touchbar:hover,
   .dynamic-island.is-touchbar:focus,
   .dynamic-island.is-touchbar:focus-within { width: calc(100vw - 28px); }
-  .dynamic-island.is-touchbar .touchbar-compact {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    color: #d0a866;
-    font-size: 10px;
-    font-weight: 700;
-    opacity: 1;
-    pointer-events: none;
-    transition: opacity .16s ease .12s;
-  }
-  .dynamic-island.is-touchbar .insights-touchbar-slot { opacity: 0; pointer-events: none; transform: translateX(10px); transition: opacity .16s ease, transform .28s ease; }
-  .dynamic-island.is-touchbar:hover .touchbar-compact,
-  .dynamic-island.is-touchbar:focus .touchbar-compact,
-  .dynamic-island.is-touchbar:focus-within .touchbar-compact { opacity: 0; transition-delay: 0s; }
-  .dynamic-island.is-touchbar:hover .insights-touchbar-slot,
-  .dynamic-island.is-touchbar:focus .insights-touchbar-slot,
-  .dynamic-island.is-touchbar:focus-within .insights-touchbar-slot { opacity: 1; pointer-events: auto; transform: none; transition-delay: .1s; }
   .signal-strip { padding: 0 14px; grid-template-columns: auto 1fr; gap: 13px; }
   .signal-meta { display: none; }
   .source-marquee { gap: 14px; }

@@ -6,7 +6,7 @@ import { apiUrl } from "../lib/api";
 import { confidenceRank, relationshipLabels } from "../lib/relationships";
 import { analysisNodeLabel } from "../lib/stocks";
 import { formatClock, formatFull } from "../lib/time";
-import { RelatedNewsPanel, type RelatedNewsSelection } from "./RelatedNewsDialog";
+import { prefetchRelatedNews, RelatedNewsPanel, type RelatedNewsSelection, type SelectedRelationshipEvidence } from "./RelatedNewsDialog";
 import { StockDailyChart } from "./StockDailyChart";
 import { StockNetwork } from "./StockNetwork";
 import { HotspotRadar } from "./HotspotRadar";
@@ -213,22 +213,38 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
     setRightPanelsPeeking(true);
   }, []);
 
+  const relationshipsForNode = useCallback((nodeId: string): SelectedRelationshipEvidence[] => filteredLinks
+    .filter((link) => link.source === nodeId || link.target === nodeId)
+    .map((link) => {
+      const counterpartId = link.source === nodeId ? link.target : link.source;
+      return { link, counterpartLabel: nodeLabels.get(counterpartId) || counterpartId.replace(/^[^:]+:/, "") };
+    }), [filteredLinks, nodeLabels]);
+
+  const topicSelection = useCallback((value: string, example?: string): RelatedNewsSelection => {
+    const relationships = relationshipsForNode(`topic:${value}`);
+    const previews: NonNullable<RelatedNewsSelection["previews"]> = relationships.flatMap(({ link }) => (link.evidence || []).map((evidence) => ({
+      id: evidence.eventId,
+      title: evidence.title,
+      publishedAt: evidence.publishedAt,
+      sources: evidence.sources,
+    })));
+    if (example && !previews.some((preview) => preview.title === example)) {
+      previews.push({ id: `sample:${value}`, title: example });
+    }
+    return { type: "topic", value, label: value, relationships, previews };
+  }, [relationshipsForNode]);
+
   const previewWord = useCallback((word: AnalysisWord) => {
     beginPanelPreview();
     setSelectedWord(word);
     setSelectedStock(null);
-    setRelatedSelection({ type: "topic", value: word.text, label: word.text });
-  }, [beginPanelPreview]);
+    setRelatedSelection(topicSelection(word.text, word.example));
+  }, [beginPanelPreview, topicSelection]);
 
   const stockSelection = useCallback((node: AnalysisNode): RelatedNewsSelection => {
-    const relationships = filteredLinks
-      .filter((link) => link.source === node.id || link.target === node.id)
-      .map((link) => {
-        const counterpartId = link.source === node.id ? link.target : link.source;
-        return { link, counterpartLabel: nodeLabels.get(counterpartId) || counterpartId.replace(/^[^:]+:/, "") };
-      });
+    const relationships = relationshipsForNode(node.id);
     return { type: "stock", value: node.symbol || node.label, label: analysisNodeLabel(node), relationships };
-  }, [filteredLinks, nodeLabels]);
+  }, [relationshipsForNode]);
 
   const previewNetworkNode = useCallback((node: AnalysisNode) => {
     beginPanelPreview();
@@ -236,13 +252,35 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
       const word = active?.words.find((candidate) => candidate.text === node.label) || null;
       setSelectedWord(word);
       setSelectedStock(null);
-      setRelatedSelection({ type: "topic", value: node.label, label: node.label });
+      setRelatedSelection(topicSelection(node.label, word?.example));
       return;
     }
     setSelectedWord(null);
     setSelectedStock(node);
     setRelatedSelection(stockSelection(node));
-  }, [active?.words, beginPanelPreview, stockSelection]);
+  }, [active?.words, beginPanelPreview, stockSelection, topicSelection]);
+
+  useEffect(() => {
+    if (!active?.from || !active.to || !active.words.length) return;
+    const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+    if (connection?.saveData) return;
+    let cancelled = false;
+    const prefetch = async () => {
+      for (const word of active.words.slice(0, 4)) {
+        if (cancelled) return;
+        try {
+          await prefetchRelatedNews(active.from, active.to, "topic", word.text);
+        } catch {
+          // User-triggered loading still reports failures in the panel.
+        }
+      }
+    };
+    const timer = window.setTimeout(() => void prefetch(), 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [active]);
 
   const endPanelPreview = useCallback(() => {
     if (autoPeekCloseTimer.current !== null) window.clearTimeout(autoPeekCloseTimer.current);
