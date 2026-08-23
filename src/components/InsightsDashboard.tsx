@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ListTree, RefreshCw, ScanSearch, Share2 } from "lucide-react";
+import { RefreshCw, ScanSearch, Share2 } from "lucide-react";
 import type { AnalysisLink, AnalysisNode, AnalysisPayload, AnalysisRelationshipType, AnalysisWindow, AnalysisWord } from "../../shared/types";
-import { formatClock, formatFull } from "../lib/time";
-import { RelatedNewsDialog, type RelatedNewsSelection } from "./RelatedNewsDialog";
-import { RelationshipList } from "./RelationshipList";
-import { StockNetwork } from "./StockNetwork";
-import { WordCloud } from "./WordCloud";
 import { apiUrl } from "../lib/api";
 import { confidenceRank, relationshipLabels } from "../lib/relationships";
 import { analysisNodeLabel } from "../lib/stocks";
+import { formatClock, formatFull } from "../lib/time";
+import { RelatedNewsPanel, type RelatedNewsSelection } from "./RelatedNewsDialog";
+import { StockDailyChart } from "./StockDailyChart";
+import { StockNetwork } from "./StockNetwork";
+import { HotspotRadar } from "./HotspotRadar";
 
 const analysisWindows = [
   { hours: 1, label: "近 1 小时" },
@@ -36,11 +36,7 @@ const relationshipTypes = [
 
 type RelationshipTypeFilter = AnalysisRelationshipType | "all";
 type ConfidenceFilter = AnalysisLink["confidence"];
-type NetworkView = "graph" | "list";
-
-function relatedSelectionKey(selection: RelatedNewsSelection) {
-  return `${selection.type}:${selection.value}`;
-}
+type DensityMode = "overview" | "analysis" | "research";
 
 function coverageLabel(coverageRatio: number | null, complete: boolean | null) {
   if (coverageRatio === null || complete === null) return "覆盖率未知";
@@ -56,20 +52,18 @@ function coverageDetailFor(window: AnalysisWindow | null) {
     : "当前没有可用覆盖记录";
 }
 
-export function InsightsDashboard({ revision }: { revision: string | null }) {
+export function InsightsDashboard({ revision, compact = false }: { revision: string | null; compact?: boolean }) {
   const [cache, setCache] = useState<CachedAnalysis | null>(null);
   const [selectedHours, setSelectedHours] = useState(24);
   const [selectedWord, setSelectedWord] = useState<AnalysisWord | null>(null);
+  const [selectedStock, setSelectedStock] = useState<AnalysisNode | null>(null);
   const [relatedSelection, setRelatedSelection] = useState<RelatedNewsSelection | null>(null);
   const [relationshipType, setRelationshipType] = useState<RelationshipTypeFilter>("all");
-  const [minimumConfidence, setMinimumConfidence] = useState<ConfidenceFilter>("low");
-  const [minimumEvents, setMinimumEvents] = useState(1);
-  const [networkView, setNetworkView] = useState<NetworkView>("graph");
+  const [minimumConfidence, setMinimumConfidence] = useState<ConfidenceFilter>("medium");
+  const [minimumEvents, setMinimumEvents] = useState(3);
+  const [densityMode, setDensityMode] = useState<DensityMode>("overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const openTimer = useRef<number | null>(null);
-  const closeTimer = useRef<number | null>(null);
-  const pinnedPreviewKey = useRef<string | null>(null);
   const cacheRef = useRef<CachedAnalysis | null>(cache);
   const loadingAnalysis = useRef(false);
 
@@ -96,11 +90,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
       }
       if (!response.ok) throw new Error("分析数据加载失败");
       const payload = await response.json() as AnalysisPayload;
-      const next = {
-        payload,
-        etag: response.headers.get("ETag"),
-        fetchedAt: Date.now(),
-      };
+      const next = { payload, etag: response.headers.get("ETag"), fetchedAt: Date.now() };
       cacheRef.current = next;
       setCache(next);
       setError(null);
@@ -159,104 +149,59 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
       ? "没有符合当前筛选条件的关系"
       : "当前窗口关系证据不足";
 
-  useEffect(() => {
-    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
-    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
-    openTimer.current = null;
-    closeTimer.current = null;
-    pinnedPreviewKey.current = null;
+  const highlightedNodeId = selectedStock?.id || (selectedWord ? `topic:${selectedWord.text}` : null);
+  const connectedTopics = useMemo(() => filteredNodes
+    .filter((node) => node.type === "topic")
+    .map((node) => node.label), [filteredNodes]);
+
+  const clearSelection = useCallback(() => {
     setSelectedWord(null);
+    setSelectedStock(null);
     setRelatedSelection(null);
-  }, [selectedHours]);
-
-  useEffect(() => {
-    pinnedPreviewKey.current = null;
-    setRelatedSelection(null);
-  }, [minimumConfidence, minimumEvents, networkView, relationshipType]);
-
-  const cancelPreviewClose = useCallback(() => {
-    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
-    closeTimer.current = null;
   }, []);
 
-  const openRelatedPreview = useCallback((selection: RelatedNewsSelection) => {
-    if (pinnedPreviewKey.current) return;
-    cancelPreviewClose();
-    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
-    openTimer.current = window.setTimeout(() => {
-      setRelatedSelection(selection);
-      openTimer.current = null;
-    }, 120);
-  }, [cancelPreviewClose]);
+  useEffect(clearSelection, [clearSelection, selectedHours]);
+  useEffect(clearSelection, [clearSelection, minimumConfidence, minimumEvents, relationshipType]);
 
-  const toggleRelatedPreview = useCallback((selection: RelatedNewsSelection) => {
-    cancelPreviewClose();
-    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
-    openTimer.current = null;
-    const key = relatedSelectionKey(selection);
-    if (pinnedPreviewKey.current === key) {
-      pinnedPreviewKey.current = null;
-      setRelatedSelection(null);
-      return;
+  useEffect(() => {
+    if (densityMode === "overview") {
+      setMinimumConfidence("medium");
+      setMinimumEvents(3);
+    } else if (densityMode === "analysis") {
+      setMinimumConfidence("low");
+      setMinimumEvents(2);
+    } else {
+      setMinimumConfidence("low");
+      setMinimumEvents(1);
     }
-    pinnedPreviewKey.current = key;
-    setRelatedSelection(selection);
-  }, [cancelPreviewClose]);
+  }, [densityMode]);
 
-  const closeRelatedPreview = useCallback(() => {
-    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
-    openTimer.current = null;
-    cancelPreviewClose();
-    if (pinnedPreviewKey.current) return;
-    closeTimer.current = window.setTimeout(() => {
-      setRelatedSelection(null);
-      closeTimer.current = null;
-    }, 220);
-  }, [cancelPreviewClose]);
-
-  const previewWord = useCallback((word: AnalysisWord, anchor: { x: number; y: number }) => {
+  const previewWord = useCallback((word: AnalysisWord) => {
     setSelectedWord(word);
-    openRelatedPreview({ type: "topic", value: word.text, label: word.text, anchor });
-  }, [openRelatedPreview]);
+    setSelectedStock(null);
+    setRelatedSelection({ type: "topic", value: word.text, label: word.text });
+  }, []);
 
-  const toggleWordPreview = useCallback((word: AnalysisWord, anchor: { x: number; y: number }) => {
-    setSelectedWord(word);
-    toggleRelatedPreview({ type: "topic", value: word.text, label: word.text, anchor });
-  }, [toggleRelatedPreview]);
-
-  const stockSelection = useCallback((node: AnalysisNode, anchor: { x: number; y: number }): RelatedNewsSelection => {
+  const stockSelection = useCallback((node: AnalysisNode): RelatedNewsSelection => {
     const relationships = filteredLinks
       .filter((link) => link.source === node.id || link.target === node.id)
       .map((link) => {
         const counterpartId = link.source === node.id ? link.target : link.source;
         return { link, counterpartLabel: nodeLabels.get(counterpartId) || counterpartId.replace(/^[^:]+:/, "") };
       });
-    return { type: "stock", value: node.symbol || node.label, label: analysisNodeLabel(node), anchor, relationships };
+    return { type: "stock", value: node.symbol || node.label, label: analysisNodeLabel(node), relationships };
   }, [filteredLinks, nodeLabels]);
 
-  const previewStock = useCallback((node: AnalysisNode, anchor: { x: number; y: number }) => {
-    openRelatedPreview(stockSelection(node, anchor));
-  }, [openRelatedPreview, stockSelection]);
+  const previewStock = useCallback((node: AnalysisNode) => {
+    setSelectedWord(null);
+    setSelectedStock(node);
+    setRelatedSelection(stockSelection(node));
+  }, [stockSelection]);
 
-  const toggleStockPreview = useCallback((node: AnalysisNode, anchor: { x: number; y: number }) => {
-    toggleRelatedPreview(stockSelection(node, anchor));
-  }, [stockSelection, toggleRelatedPreview]);
-
-  const closeRelatedNews = useCallback(() => {
-    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
-    cancelPreviewClose();
-    openTimer.current = null;
-    pinnedPreviewKey.current = null;
-    setRelatedSelection(null);
-  }, [cancelPreviewClose]);
-
-  useEffect(() => () => {
-    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
-    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
-  }, []);
+  const preserveSelection = useCallback(() => undefined, []);
 
   return (
-    <section id="market-insights" className="insights-dashboard" aria-labelledby="market-insights-title">
+    <section id="market-insights" className={`insights-dashboard ${compact ? "is-compact" : ""}`} aria-labelledby="market-insights-title">
       <header className="insights-heading">
         <div>
           <span className="eyebrow">MARKET INTELLIGENCE</span>
@@ -271,7 +216,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
         </div>
       </header>
 
-      <div className="analysis-windows" role="tablist" aria-label="统计时间窗口">
+      <div className={`analysis-windows is-window-${analysisWindows.findIndex((option) => option.hours === selectedHours)}`} role="tablist" aria-label="统计时间窗口">
         {analysisWindows.map((option) => {
           const summary = summariesByHours.get(option.hours);
           return (
@@ -295,64 +240,9 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
       </div>
 
       {error ? <div className="analysis-error">{error}</div> : null}
-      <div className="analysis-plots">
-        <section className="analysis-panel word-panel" aria-labelledby="word-cloud-title">
-          <header>
-            <div><ScanSearch size={17} /><h2 id="word-cloud-title">热点主题云</h2></div>
-            {active ? <span>{active.eventCount} 个事件 · {active.sourceCount} 个来源</span> : null}
-          </header>
-          {coverageDetail ? <div className="analysis-coverage-detail">{coverageDetail}</div> : null}
-          <WordCloud
-            words={active?.words || []}
-            selected={selectedWord?.text || null}
-            onPreview={previewWord}
-            onTogglePreview={toggleWordPreview}
-            onPreviewEnd={closeRelatedPreview}
-          />
-          <footer>
-            {selectedWord ? (
-              <>
-                <strong>{selectedWord.text}</strong>
-                <span>{selectedWord.count} 个事件</span>
-                <span>前窗 {selectedWord.baselineCount}</span>
-                <span>突发 {selectedWord.burst >= 0 ? "+" : ""}{selectedWord.burst.toFixed(2)}</span>
-                <span>来源多样性 {Math.round(selectedWord.sourceDiversity * 100)}%</span>
-                <span>{selectedWord.direction === "positive" ? "偏正面" : selectedWord.direction === "negative" ? "偏负面" : selectedWord.direction === "mixed" ? "方向混合" : "方向中性"}</span>
-                <span className="topic-example">{selectedWord.example}</span>
-              </>
-            ) : (
-              <>
-                <span>{active ? `共 ${active.words.length} 个高频词` : "暂无统计"}</span>
-                {active?.words.length ? (
-                  <span className="direction-legend" aria-label="词云方向颜色图例">
-                    <i className="direction-positive" />正面
-                    <i className="direction-negative" />负面
-                    <i className="direction-mixed" />混合
-                    <i className="direction-neutral" />中性
-                  </span>
-                ) : null}
-              </>
-            )}
-          </footer>
-        </section>
-
-        <section className="analysis-panel network-panel" aria-labelledby="stock-network-title">
-          <header>
-            <div><Share2 size={17} /><h2 id="stock-network-title">{networkView === "graph" ? "关联股票图" : "关联关系列表"}</h2></div>
-            <div className="network-header-tools">
-              <div className="network-legend" aria-label="股票周期涨跌颜色图例">
-                <span><i className="is-stock price-up" />涨</span>
-                <span><i className="is-stock price-down" />跌</span>
-                <span><i className="is-stock price-unavailable" />无行情</span>
-                <span><i className="is-topic" />主题</span>
-              </div>
-              <div className="network-view-switch" role="group" aria-label="关联数据视图">
-                <button type="button" className={networkView === "graph" ? "is-active" : ""} aria-pressed={networkView === "graph"} onClick={() => setNetworkView("graph")} title="图谱视图"><Share2 size={13} /><span>图谱</span></button>
-                <button type="button" className={networkView === "list" ? "is-active" : ""} aria-pressed={networkView === "list"} onClick={() => setNetworkView("list")} title="列表视图"><ListTree size={13} /><span>列表</span></button>
-              </div>
-            </div>
-          </header>
-          {coverageDetail ? <div className="analysis-coverage-detail">{coverageDetail}</div> : null}
+      <div className="insights-workbench">
+        <header className={`insights-toolbar density-${densityMode}`}>
+          <div className="insights-toolbar-title"><Share2 size={16} /><div><span>关系底图</span><h2>市场关联全景</h2></div></div>
           <div className="relationship-filters" aria-label="关联关系筛选">
             <label>
               <span>关系类型</span>
@@ -377,37 +267,91 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
             </label>
             <output aria-live="polite">{filteredLinks.length} / {graphLinks.length} 条</output>
           </div>
-          <div className="network-edge-legend" aria-label="关系类型图例">
-            {relationshipTypes.map((type) => <span key={type}><i className={`is-${type}`} />{relationshipLabels[type]}</span>)}
+          <div className="density-switcher" role="group" aria-label="信息密度">
+            <span>密度</span>
+            {(["overview", "analysis", "research"] as const).map((mode) => (
+              <button
+                type="button"
+                key={mode}
+                className={densityMode === mode ? "is-active" : ""}
+                aria-pressed={densityMode === mode}
+                onClick={() => setDensityMode(mode)}
+              >
+                {mode === "overview" ? "概览" : mode === "analysis" ? "分析" : "研究"}
+              </button>
+            ))}
           </div>
-          {networkView === "graph" ? (
-            <StockNetwork
-              nodes={filteredNodes}
-              links={filteredLinks}
-              emptyMessage={graphEmptyMessage}
-              onPreview={previewStock}
-              onTogglePreview={toggleStockPreview}
-              onPreviewEnd={closeRelatedPreview}
+          <div className="network-legend" aria-label="股票周期涨跌颜色图例">
+            <span><i className="is-stock price-up" />涨</span>
+            <span><i className="is-stock price-down" />跌</span>
+            <span><i className="is-stock price-unavailable" />无行情</span>
+            <span><i className="is-topic" />主题</span>
+          </div>
+        </header>
+        {coverageDetail ? <div className="analysis-coverage-detail">{coverageDetail}</div> : null}
+
+        <div className={`insights-canvas ${selectedStock ? "has-stock-selection" : ""}`}>
+          <StockNetwork
+            nodes={filteredNodes}
+            links={filteredLinks}
+            emptyMessage={graphEmptyMessage}
+            highlightedNodeId={highlightedNodeId}
+            onClearSelection={clearSelection}
+            onPreview={previewStock}
+            onTogglePreview={previewStock}
+            onPreviewEnd={preserveSelection}
+          />
+
+          <section className="insight-overlay word-cloud-panel" aria-labelledby="word-cloud-title">
+            <header>
+              <div className="insight-panel-title"><ScanSearch size={15} /><div><span>热点扫描</span><h2 id="word-cloud-title">主题词云</h2></div></div>
+              <strong>{active ? `${active.eventCount} 个事件` : "--"}</strong>
+            </header>
+            <HotspotRadar
+              words={active?.words || []}
+              connectedTopics={connectedTopics}
+              selected={selectedWord?.text || null}
+              onPreview={(word) => previewWord(word)}
+              onTogglePreview={(word) => previewWord(word)}
+              onPreviewEnd={preserveSelection}
             />
-          ) : <RelationshipList nodes={filteredNodes} links={filteredLinks} emptyMessage={graphEmptyMessage} />}
-          <footer>
-            <span>股票 {filteredNodes.filter((node) => node.type === "stock").length}</span>
-            <span>主题 {filteredNodes.filter((node) => node.type === "topic").length}</span>
-            <span>关联 {filteredLinks.length}</span>
-            <span>高置信 {filteredLinks.filter((link) => link.confidence === "high").length}</span>
-          </footer>
-        </section>
+            <footer>
+              {selectedWord ? (
+                <>
+                  <strong>{selectedWord.text}</strong>
+                  <span>{selectedWord.count} 个事件</span>
+                  <span>突发 {selectedWord.burst >= 0 ? "+" : ""}{selectedWord.burst.toFixed(2)}</span>
+                  <span>来源 {Math.round(selectedWord.sourceDiversity * 100)}%</span>
+                </>
+              ) : (
+                <>
+                  <span>{active ? `${active.words.length} 个高价值主题` : "暂无统计"}</span>
+                  <span className="direction-legend" aria-label="词云方向颜色图例">
+                    <i className="direction-positive" />正面
+                    <i className="direction-negative" />负面
+                    <i className="direction-mixed" />混合
+                    <i className="direction-neutral" />中性
+                  </span>
+                </>
+              )}
+            </footer>
+          </section>
+
+          <RelatedNewsPanel selection={relatedSelection} from={active?.from || null} to={active?.to || null} />
+          {selectedStock ? <StockDailyChart node={selectedStock} /> : null}
+
+          <div className="canvas-network-meta">
+            <div className="network-edge-legend" aria-label="关系类型图例">
+              {relationshipTypes.map((type) => <span key={type}><i className={`is-${type}`} />{relationshipLabels[type]}</span>)}
+            </div>
+            <div className="canvas-network-counts">
+              <span>股票 {filteredNodes.filter((node) => node.type === "stock").length}</span>
+              <span>主题 {filteredNodes.filter((node) => node.type === "topic").length}</span>
+              <span>高置信 {filteredLinks.filter((link) => link.confidence === "high").length}</span>
+            </div>
+          </div>
+        </div>
       </div>
-      {relatedSelection && active ? (
-        <RelatedNewsDialog
-          selection={relatedSelection}
-          from={active.from}
-          to={active.to}
-          onClose={closeRelatedNews}
-          onPointerEnter={cancelPreviewClose}
-          onPointerLeave={closeRelatedPreview}
-        />
-      ) : null}
     </section>
   );
 }

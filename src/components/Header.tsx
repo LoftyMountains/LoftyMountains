@@ -1,4 +1,4 @@
-import { Activity, ChartNoAxesCombined, Github, Monitor, Moon, Radio, Sun, Wifi, WifiOff } from "lucide-react";
+import { Activity, ArrowLeft, ChartNoAxesCombined, Github, Monitor, Moon, Radio, Sun, Wifi, WifiOff } from "lucide-react";
 import type { SourceStatus } from "../../shared/types";
 import type { ThemeMode } from "../lib/theme";
 import { formatClock, formatDay } from "../lib/time";
@@ -8,6 +8,8 @@ interface HeaderProps {
   serverTime: string;
   sources: SourceStatus[];
   theme: ThemeMode;
+  insightsActive: boolean;
+  signalsHidden: boolean;
   onInsightsClick: () => void;
   onThemeChange: (theme: ThemeMode) => void;
 }
@@ -18,7 +20,7 @@ const themeOptions = [
   { mode: "system" as const, label: "跟随系统", icon: Monitor },
 ];
 
-export function Header({ connected, serverTime, sources, theme, onInsightsClick, onThemeChange }: HeaderProps) {
+export function Header({ connected, serverTime, sources, theme, insightsActive, signalsHidden, onInsightsClick, onThemeChange }: HeaderProps) {
   const liveCount = sources.filter((source) => source.state === "live").length;
   return (
     <>
@@ -43,12 +45,13 @@ export function Header({ connected, serverTime, sources, theme, onInsightsClick,
             <span>{connected ? "实时连接" : "正在重连"}</span>
           </div>
           <button
-            className="text-button header-insights-button"
+            className={`text-button header-insights-button ${insightsActive ? "is-active" : ""}`}
             onClick={onInsightsClick}
-            aria-label="定位到市场洞察"
+            aria-label={insightsActive ? "返回实时市场" : "打开市场洞察"}
+            aria-pressed={insightsActive}
           >
-            <ChartNoAxesCombined size={16} />
-            <span>市场洞察</span>
+            {insightsActive ? <ArrowLeft size={16} /> : <ChartNoAxesCombined size={16} />}
+            <span>{insightsActive ? "返回实时" : "市场洞察"}</span>
           </button>
           <a
             className="icon-button github-link"
@@ -78,7 +81,7 @@ export function Header({ connected, serverTime, sources, theme, onInsightsClick,
         </div>
       </header>
 
-      <div className="signal-strip">
+      <div className={`signal-strip ${signalsHidden ? "is-hidden" : ""}`} aria-hidden={signalsHidden}>
         <div className="signal-lead"><Radio size={14} /> 全球财经信号</div>
         <div className="source-marquee">
           {sources.map((source) => (

@@ -43,7 +43,9 @@ export function WordCloud({ words, selected, onPreview, onTogglePreview, onPrevi
       setPlaced([]);
       return;
     }
-    const visible = words.slice(0, size.width < 480 ? 32 : 46);
+    const areaPerWord = size.width < 260 ? 4_200 : size.width < 480 ? 3_000 : 2_600;
+    const capacity = Math.max(12, Math.floor(size.width * size.height / areaPerWord));
+    const visible = words.slice(0, capacity);
     const min = Math.min(...visible.map((word) => word.score));
     const max = Math.max(...visible.map((word) => word.score));
     const lower = size.width < 480 ? 12 : 13;

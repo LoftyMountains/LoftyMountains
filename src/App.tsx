@@ -38,11 +38,26 @@ function createStreamClientId() {
   }
 }
 
+function canConsumeVerticalScroll(target: EventTarget | null, boundary: HTMLElement, deltaY: number) {
+  let element = target instanceof Element ? target : null;
+  while (element) {
+    const style = window.getComputedStyle(element);
+    const scrollable = /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 1;
+    if (scrollable) {
+      const maximum = element.scrollHeight - element.clientHeight;
+      if ((deltaY > 0 && element.scrollTop < maximum - 1) || (deltaY < 0 && element.scrollTop > 1)) return true;
+    }
+    if (element === boundary) break;
+    element = element.parentElement;
+  }
+  return false;
+}
+
 const InsightsDashboard = lazy(() => import("./components/InsightsDashboard").then((module) => ({ default: module.InsightsDashboard })));
 
-function InsightsFallback() {
+function InsightsFallback({ compact = false }: { compact?: boolean }) {
   return (
-    <section id="market-insights" className="insights-dashboard" aria-busy="true">
+    <section id="market-insights" className={`insights-dashboard ${compact ? "is-compact" : ""}`} aria-busy="true">
       <header className="insights-heading">
         <div><span className="eyebrow">MARKET INTELLIGENCE</span><h1>热点与股票关联</h1></div>
       </header>
@@ -75,10 +90,15 @@ export function App() {
   const [now, setNow] = useState(Date.now());
   const [theme, setTheme] = useState<ThemeMode>(readThemeMode);
   const [analysisRevision, setAnalysisRevision] = useState<string | null>(null);
+  const [workspaceView, setWorkspaceView] = useState<"live" | "insights">("live");
+  const [insightsCompact, setInsightsCompact] = useState(false);
   const latestLiveNewsAt = useRef<string | null>(null);
   const liveNewsSyncController = useRef<AbortController | null>(null);
   const lastLiveNewsSyncAt = useRef(0);
   const streamClientId = useRef(createStreamClientId());
+  const workspaceWheelGesture = useRef({ delta: 0, direction: 0, lastAt: 0 });
+  const livePageRef = useRef<HTMLDivElement>(null);
+  const insightsPageRef = useRef<HTMLDivElement>(null);
 
   const mergeLiveNews = useCallback((incoming: NewsItem[]) => {
     setLiveNews((current) => {
@@ -125,6 +145,51 @@ export function App() {
   useEffect(() => {
     applyThemeMode(theme);
   }, [theme]);
+
+  useEffect(() => {
+    const handleWheel = (event: WheelEvent) => {
+      const boundary = workspaceView === "live" ? livePageRef.current : insightsPageRef.current;
+      const direction = Math.sign(event.deltaY);
+      const acceptsDirection = workspaceView === "live"
+        ? direction > 0
+        : insightsCompact
+          ? direction < 0
+          : direction !== 0;
+      const gesture = workspaceWheelGesture.current;
+      const now = performance.now();
+      if (!boundary
+        || !(event.target instanceof Node)
+        || !boundary.contains(event.target)
+        || !acceptsDirection
+        || canConsumeVerticalScroll(event.target, boundary, event.deltaY)) {
+        gesture.delta = 0;
+        gesture.direction = 0;
+        gesture.lastAt = now;
+        return;
+      }
+      if (now - gesture.lastAt > 320 || gesture.direction !== direction) gesture.delta = 0;
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? window.innerHeight : 1;
+      gesture.delta += event.deltaY * unit;
+      gesture.direction = direction;
+      gesture.lastAt = now;
+      if (Math.abs(gesture.delta) >= 48) {
+        gesture.delta = 0;
+        gesture.direction = 0;
+        if (workspaceView === "live") {
+          setInsightsCompact(false);
+          setWorkspaceView("insights");
+        } else if (insightsCompact) {
+          setInsightsCompact(false);
+        } else if (direction > 0) {
+          setInsightsCompact(true);
+        } else {
+          setWorkspaceView("live");
+        }
+      }
+    };
+    window.addEventListener("wheel", handleWheel, { capture: true, passive: true });
+    return () => window.removeEventListener("wheel", handleWheel, true);
+  }, [insightsCompact, workspaceView]);
 
   useEffect(() => {
     const clock = window.setInterval(() => setNow(Date.now()), 1000);
@@ -379,59 +444,63 @@ export function App() {
     setReplay(null);
   }
 
-  function scrollToInsights() {
-    document.getElementById("market-insights")?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
-  }
-
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${workspaceView === "insights" ? "is-signal-collapsed" : ""}`}>
       <Header
         connected={connected}
         serverTime={new Date(now).toISOString()}
         sources={sources}
         theme={theme}
-        onInsightsClick={scrollToInsights}
+        insightsActive={workspaceView === "insights"}
+        signalsHidden={workspaceView === "insights"}
+        onInsightsClick={() => {
+          setInsightsCompact(false);
+          setWorkspaceView((current) => current === "live" ? "insights" : "live");
+        }}
         onThemeChange={setTheme}
       />
       <div className="workspace-scroll">
-        <main className="dashboard">
-          <NewsFeed
-            items={visibleItems}
-            mode={mode}
-            sources={sources}
-            selectedSources={selectedSources}
-            now={now}
-            loading={loading}
-            replayTime={replayTime}
-            onModeLive={returnLive}
-            onToggleSource={toggleSource}
-            onOpenQuery={() => { setQueryError(null); setQueryOpen(true); }}
-          />
-          <div className="market-column">
-            <MarketChart market={visibleMarket} replaying={mode === "replay"} />
-            {mode === "replay" ? (
-              <ReplayBar
-                current={replayIndex}
-                total={replayTimeline.length}
-                timestamp={replayTime}
-                playing={playing}
-                speed={speed}
-                onPlayingChange={setPlaying}
-                onCurrentChange={(value) => { setReplayIndex(value); setPlaying(false); }}
-                onSpeedChange={setSpeed}
-                onClose={returnLive}
+        <div className={`workspace-track is-${workspaceView}`}>
+          <div className="workspace-page" aria-hidden={workspaceView !== "live"} ref={livePageRef}>
+            <main className="dashboard">
+              <NewsFeed
+                items={visibleItems}
+                mode={mode}
+                sources={sources}
+                selectedSources={selectedSources}
+                now={now}
+                loading={loading}
+                replayTime={replayTime}
+                onModeLive={returnLive}
+                onToggleSource={toggleSource}
+                onOpenQuery={() => { setQueryError(null); setQueryOpen(true); }}
               />
-            ) : null}
+              <div className="market-column">
+                <MarketChart market={visibleMarket} replaying={mode === "replay"} />
+                {mode === "replay" ? (
+                  <ReplayBar
+                    current={replayIndex}
+                    total={replayTimeline.length}
+                    timestamp={replayTime}
+                    playing={playing}
+                    speed={speed}
+                    onPlayingChange={setPlaying}
+                    onCurrentChange={(value) => { setReplayIndex(value); setPlaying(false); }}
+                    onSpeedChange={setSpeed}
+                    onClose={returnLive}
+                  />
+                ) : null}
+              </div>
+            </main>
           </div>
-        </main>
-        {!loading ? (
-          <Suspense fallback={<InsightsFallback />}>
-            <InsightsDashboard revision={analysisRevision} />
-          </Suspense>
-        ) : <InsightsFallback />}
+          <div className="workspace-page" aria-hidden={workspaceView !== "insights"} ref={insightsPageRef}>
+            {!loading ? (
+              <Suspense fallback={<InsightsFallback compact={insightsCompact} />}>
+                <InsightsDashboard revision={analysisRevision} compact={insightsCompact} />
+              </Suspense>
+            ) : <InsightsFallback compact={insightsCompact} />}
+          </div>
+        </div>
       </div>
 
       {queryOpen ? <QueryPanel from={from} to={to} query={query} busy={queryBusy} error={queryError} onFromChange={setFrom} onToChange={setTo} onQueryChange={setQuery} onClose={() => setQueryOpen(false)} onSearch={runSearch} onReplay={runReplay} /> : null}

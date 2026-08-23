@@ -19,6 +19,8 @@ interface StockNetworkProps {
   onPreview?: (node: AnalysisNode, anchor: { x: number; y: number }) => void;
   onTogglePreview?: (node: AnalysisNode, anchor: { x: number; y: number }) => void;
   onPreviewEnd?: () => void;
+  highlightedNodeId?: string | null;
+  onClearSelection?: () => void;
 }
 
 interface ZoomControls {
@@ -43,7 +45,7 @@ const NETWORK_CONTROLS_WIDTH = 132;
 const NETWORK_CONTROLS_BOTTOM = 62;
 const NETWORK_NODE_RADIUS = 18;
 const NETWORK_LABEL_MAX_WIDTH = 86;
-const NETWORK_SELECTION_HEIGHT = 62;
+const NETWORK_SELECTION_HEIGHT = 82;
 const NETWORK_SETTLE_TICKS = 180;
 
 const directionLabels: Record<AnalysisNode["direction"], string> = {
@@ -106,6 +108,44 @@ function reactionLabel(node: AnalysisNode) {
   return `${confidence} · 超额收益 5分钟 ${signedPercent(reaction.excessReturn5m)} · 30分钟 ${signedPercent(reaction.excessReturn30m)} · 下一交易日 ${signedPercent(reaction.excessReturn1d)} · ${samples}${benchmark}${availability}`;
 }
 
+function valueTone(value: number | null) {
+  if (value == null || Math.abs(value) < .05) return "neutral";
+  return value > 0 ? "positive" : "negative";
+}
+
+function marketValidation(node: AnalysisNode) {
+  const reaction = node.marketReaction;
+  if (!reaction) return null;
+  if (reaction.status === "unavailable") {
+    return {
+      status: "未验证",
+      tone: "unavailable",
+      headline: reaction.reason || "行情数据不足",
+      metrics: [] as Array<{ label: string; value: number | null }>,
+      context: "等待有效行情样本",
+    };
+  }
+  const metrics = [
+    { label: "5 分钟", value: reaction.excessReturn5m, sampleSize: reaction.sampleSizes?.excessReturn5m ?? reaction.sampleSize },
+    { label: "30 分钟", value: reaction.excessReturn30m, sampleSize: reaction.sampleSizes?.excessReturn30m ?? reaction.sampleSize },
+    { label: "次日", value: reaction.excessReturn1d, sampleSize: reaction.sampleSizes?.excessReturn1d ?? reaction.sampleSize },
+  ];
+  const primary = [...metrics].reverse().find((metric) => metric.value != null) || null;
+  const benchmark = reaction.benchmark?.name || "市场基准";
+  const primaryTone = valueTone(primary?.value ?? null);
+  const relative = primaryTone === "positive" ? "跑赢" : primaryTone === "negative" ? "跑输" : "基本同步";
+  const headline = primary
+    ? `${primary.label}${relative}${benchmark} ${signedPercent(primary.value)}`
+    : reaction.reason || "暂未形成有效收益结论";
+  return {
+    status: reaction.status === "verified" ? "已验证" : "样本观察",
+    tone: reaction.status === "verified" ? primaryTone : "watch",
+    headline,
+    metrics,
+    context: `${primary?.label || "有效"}样本 ${primary?.sampleSize ?? reaction.sampleSize}${reaction.benchmark ? ` · 基准 ${reaction.benchmark.name}` : ""}`,
+  };
+}
+
 function nodeId(value: string | SimNode) {
   return typeof value === "string" ? value : value.id;
 }
@@ -143,7 +183,7 @@ function constrainPosition(width: number, height: number, x: number, y: number):
   return constrained;
 }
 
-export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系证据不足", onPreview, onTogglePreview, onPreviewEnd }: StockNetworkProps) {
+export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系证据不足", onPreview, onTogglePreview, onPreviewEnd, highlightedNodeId = null, onClearSelection }: StockNetworkProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const controlsRef = useRef<ZoomControls | null>(null);
@@ -261,7 +301,10 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
         event.stopPropagation();
         showLinkPreview(event, link, true);
       });
-    svg.on("click", clearLinkPreview);
+    svg.on("click", () => {
+      clearLinkPreview();
+      onClearSelection?.();
+    });
 
     const activateNode = (node: SimNode) => {
       root.selectAll<SVGGElement, SimNode>(".network-node")
@@ -344,8 +387,8 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .attr("x", (node) => node.type === "stock" ? 17 : 13)
       .attr("y", 4)
       .text(compactAnalysisNodeLabel);
-    nodeSelection.append("title")
-      .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${analysisNodeLabel(node)}${node.symbol ? ` (${node.symbol})` : ""}${node.type === "stock" ? ` · ${periodChangeLabel(node, true)}` : ""} · ${node.mentions} 个事件 · 舆情${directionLabels[node.direction]}${node.marketReaction ? ` · ${reactionLabel(node)}` : ""}`);
+    nodeSelection.filter((node) => node.type === "topic").append("title")
+      .text((node) => `主题：${analysisNodeLabel(node)} · ${node.mentions} 个事件 · 舆情${directionLabels[node.direction]}`);
 
     const labelFacesLeft = (node: SimNode) => (node.x || 0) > size.width - NETWORK_LABEL_MAX_WIDTH
       || ((node.y || 0) < NETWORK_CONTROLS_BOTTOM + NETWORK_NODE_RADIUS
@@ -430,7 +473,19 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       pinnedLinkRef.current = null;
       controlsRef.current = null;
     };
-  }, [links, nodes, onPreview, onPreviewEnd, onTogglePreview, size]);
+  }, [links, nodes, onClearSelection, onPreview, onPreviewEnd, onTogglePreview, size]);
+
+  useEffect(() => {
+    if (!svgRef.current) return;
+    const svg = d3.select(svgRef.current);
+    svg.selectAll<SVGGElement, SimNode>(".network-node")
+      .classed("is-external-active", (node) => node.id === highlightedNodeId)
+      .classed("is-external-related", (node) => Boolean(highlightedNodeId && node.id !== highlightedNodeId && links.some((link) => (link.source === highlightedNodeId && link.target === node.id) || (link.target === highlightedNodeId && link.source === node.id))));
+    svg.selectAll<SVGLineElement, SimLink>(".network-links line")
+      .classed("is-external-related", (link) => Boolean(highlightedNodeId && (nodeId(link.source) === highlightedNodeId || nodeId(link.target) === highlightedNodeId)));
+  }, [highlightedNodeId, links]);
+
+  const selectedValidation = selected ? marketValidation(selected) : null;
 
   return (
     <div className="stock-network" ref={wrapRef}>
@@ -469,10 +524,27 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       ) : null}
       {selected ? (
         <div className={`network-selection direction-${selected.direction} ${periodChangeClass(selected)}`} style={periodChangeStyle(selected)}>
-          <i className={`is-${selected.type}`} />
-          <strong>{analysisNodeLabel(selected)}</strong>
-          {selected.symbol ? <span>{selected.symbol}</span> : null}
-          <span title={`${selected.type === "stock" ? `${periodChangeLabel(selected, true)} · ` : ""}${reactionLabel(selected)}`}>{selected.type === "stock" ? `${periodChangeLabel(selected)} · ` : ""}{selected.mentions} 个事件 · 舆情{directionLabels[selected.direction]}{selected.marketReaction ? ` · ${reactionLabel(selected)}` : ""}</span>
+          <div className="network-selection-identity">
+            <i className={`is-${selected.type}`} />
+            <strong>{analysisNodeLabel(selected)}</strong>
+            {selected.symbol ? <span>{selected.symbol}</span> : null}
+          </div>
+          {selected.type === "stock" ? <span className={`network-period ${periodChangeClass(selected)}`} title={periodChangeLabel(selected, true)}>{periodChangeLabel(selected)}</span> : null}
+          {selectedValidation ? (
+            <div className={`market-validation is-${selectedValidation.tone}`} title={reactionLabel(selected)}>
+              <span className="market-validation-status">{selectedValidation.status}</span>
+              <strong>{selectedValidation.headline}</strong>
+              {selectedValidation.metrics.length ? (
+                <div className="market-validation-metrics">
+                  {selectedValidation.metrics.map((metric) => (
+                    <span className={`is-${valueTone(metric.value)}`} key={metric.label}>{metric.label} <b>{signedPercent(metric.value)}</b></span>
+                  ))}
+                </div>
+              ) : null}
+              <small>{selectedValidation.context}</small>
+            </div>
+          ) : null}
+          <span className="network-selection-context">{selected.mentions} 个事件 · 舆情{directionLabels[selected.direction]}</span>
         </div>
       ) : null}
     </div>

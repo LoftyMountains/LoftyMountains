@@ -62,6 +62,21 @@ export interface AnalysisPeriodChange {
   to: string | null;
 }
 
+export interface AnalysisDailyPoint {
+  date: string;
+  open?: number;
+  high?: number;
+  low?: number;
+  close: number;
+}
+
+export interface AnalysisDailySeries {
+  symbol: string;
+  provider: string;
+  generatedAt: string;
+  points: AnalysisDailyPoint[];
+}
+
 export interface AnalysisNode {
   id: string;
   label: string;
@@ -72,6 +87,7 @@ export interface AnalysisNode {
   direction: "positive" | "negative" | "mixed" | "neutral";
   directionScore: number;
   periodChange?: AnalysisPeriodChange;
+  dailyPrices?: AnalysisDailyPoint[];
   marketReaction?: AnalysisMarketReaction;
 }
 
