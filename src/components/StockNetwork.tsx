@@ -444,7 +444,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       {selected ? (
         <div className={`network-selection direction-${selected.direction}`}>
           <i className={`is-${selected.type}`} />
-          <strong>{selected.label}</strong>
+          <strong>{analysisNodeLabel(selected)}</strong>
           {selected.symbol ? <span>{selected.symbol}</span> : null}
           <span title={reactionLabel(selected)}>{selected.mentions} 个事件 · {directionLabels[selected.direction]}{selected.marketReaction ? ` · ${reactionLabel(selected)}` : ""}</span>
         </div>
