@@ -16,6 +16,7 @@ const analysisWindows = [
   { hours: 720, label: "近 1 月" },
 ] as const;
 
+const analysisWindowsQuery = analysisWindows.map(({ hours }) => hours).join(",");
 const windowCacheMs = 2 * 60_000;
 
 interface CachedAnalysis {
@@ -55,7 +56,7 @@ function coverageDetailFor(window: AnalysisWindow | null) {
 }
 
 export function InsightsDashboard({ revision }: { revision: string | null }) {
-  const [cache, setCache] = useState<Record<number, CachedAnalysis>>({});
+  const [cache, setCache] = useState<CachedAnalysis | null>(null);
   const [selectedHours, setSelectedHours] = useState(24);
   const [selectedWord, setSelectedWord] = useState<AnalysisWord | null>(null);
   const [relatedSelection, setRelatedSelection] = useState<RelatedNewsSelection | null>(null);
@@ -68,27 +69,27 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
   const pinnedPreviewKey = useRef<string | null>(null);
-  const cacheRef = useRef(cache);
-  const loadingWindows = useRef(new Set<number>());
+  const cacheRef = useRef<CachedAnalysis | null>(cache);
+  const loadingAnalysis = useRef(false);
 
   useEffect(() => {
     cacheRef.current = cache;
   }, [cache]);
 
-  const load = useCallback(async (hours: number, revalidate = false) => {
-    const cached = cacheRef.current[hours];
+  const load = useCallback(async (revalidate = false) => {
+    const cached = cacheRef.current;
     if (!revalidate && cached && Date.now() - cached.fetchedAt < windowCacheMs) return;
-    if (loadingWindows.current.has(hours)) return;
-    loadingWindows.current.add(hours);
+    if (loadingAnalysis.current) return;
+    loadingAnalysis.current = true;
     setLoading(true);
     try {
       const headers = new Headers();
       if (cached?.etag) headers.set("If-None-Match", cached.etag);
-      const response = await fetch(`${apiUrl("/api/analysis")}?windows=${hours}`, { headers });
+      const response = await fetch(`${apiUrl("/api/analysis")}?windows=${analysisWindowsQuery}`, { headers });
       if (response.status === 304 && cached) {
         const refreshed = { ...cached, fetchedAt: Date.now() };
-        cacheRef.current = { ...cacheRef.current, [hours]: refreshed };
-        setCache(cacheRef.current);
+        cacheRef.current = refreshed;
+        setCache(refreshed);
         setError(null);
         return;
       }
@@ -99,28 +100,28 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
         etag: response.headers.get("ETag"),
         fetchedAt: Date.now(),
       };
-      cacheRef.current = { ...cacheRef.current, [hours]: next };
-      setCache(cacheRef.current);
+      cacheRef.current = next;
+      setCache(next);
       setError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "分析数据加载失败");
     } finally {
-      loadingWindows.current.delete(hours);
-      setLoading(loadingWindows.current.size > 0);
+      loadingAnalysis.current = false;
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load(selectedHours);
-  }, [load, selectedHours]);
+    void load();
+  }, [load]);
 
   useEffect(() => {
-    if (revision) void load(selectedHours, true);
-  }, [load, revision, selectedHours]);
+    if (revision) void load(true);
+  }, [load, revision]);
 
   useEffect(() => {
     const revalidateVisibleWindow = () => {
-      if (document.visibilityState === "visible") void load(selectedHours, true);
+      if (document.visibilityState === "visible") void load(true);
     };
     document.addEventListener("visibilitychange", revalidateVisibleWindow);
     window.addEventListener("pageshow", revalidateVisibleWindow);
@@ -128,17 +129,14 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
       document.removeEventListener("visibilitychange", revalidateVisibleWindow);
       window.removeEventListener("pageshow", revalidateVisibleWindow);
     };
-  }, [load, selectedHours]);
+  }, [load]);
 
-  const payload = cache[selectedHours]?.payload || null;
-  const active = useMemo(() => payload?.windows[0], [payload]);
-  const latestPayload = useMemo(() => Object.values(cache)
-    .map((entry) => entry.payload)
-    .sort((left, right) => right.generatedAt.localeCompare(left.generatedAt))[0] || null, [cache]);
-  const summariesByHours = useMemo(() => new Map(Object.values(cache).flatMap((entry) => entry.payload.summaries)
-    .map((summary) => [summary.hours, summary] as const)), [cache]);
+  const payload = cache?.payload || null;
+  const active = useMemo(() => payload?.windows.find((window) => window.hours === selectedHours), [payload, selectedHours]);
+  const summariesByHours = useMemo(() => new Map(payload?.summaries
+    .map((summary) => [summary.hours, summary] as const) || []), [payload]);
   const activeSummary = summariesByHours.get(selectedHours) || null;
-  const dataThrough = active?.actualTo || activeSummary?.actualTo || latestPayload?.latestEventAt || null;
+  const dataThrough = active?.actualTo || activeSummary?.actualTo || payload?.latestEventAt || null;
   const coverageDetail = coverageDetailFor(active || null);
   const graphLinks = useMemo(() => (active?.links || []).map((link) => ({
     ...link,
@@ -265,10 +263,10 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
         </div>
         <div className="insights-heading-meta">
           <div className="insights-times">
-            {latestPayload ? <span title={formatFull(latestPayload.generatedAt)}>分析更新于 {formatClock(latestPayload.generatedAt)}</span> : null}
+            {payload ? <span title={formatFull(payload.generatedAt)}>分析更新于 {formatClock(payload.generatedAt)}</span> : null}
             {dataThrough ? <span title={formatFull(dataThrough)}>数据截至 {formatClock(dataThrough)}</span> : <span>数据截至 --</span>}
           </div>
-          <button className={`icon-button ${loading ? "is-spinning" : ""}`} onClick={() => void load(selectedHours, true)} title="刷新分析" aria-label="刷新分析"><RefreshCw size={17} /></button>
+          <button className={`icon-button ${loading ? "is-spinning" : ""}`} onClick={() => void load(true)} title="刷新分析" aria-label="刷新分析"><RefreshCw size={17} /></button>
         </div>
       </header>
 
