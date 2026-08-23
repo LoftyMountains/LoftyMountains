@@ -3,6 +3,7 @@ import * as d3 from "d3";
 import { RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import type { AnalysisLink, AnalysisNode } from "../../shared/types";
 import { confidenceLabels, relationshipLabels, sourceLabels } from "../lib/relationships";
+import { analysisNodeLabel, compactAnalysisNodeLabel } from "../lib/stocks";
 import { formatFull } from "../lib/time";
 
 type SimNode = AnalysisNode & d3.SimulationNodeDatum;
@@ -78,6 +79,11 @@ function reactionLabel(node: AnalysisNode) {
 
 function nodeId(value: string | SimNode) {
   return typeof value === "string" ? value : value.id;
+}
+
+function nodeLabel(nodes: AnalysisNode[], id: string) {
+  const node = nodes.find((candidate) => candidate.id === id);
+  return node ? analysisNodeLabel(node) : id;
 }
 
 function analysisLink(link: SimLink): AnalysisLink {
@@ -242,7 +248,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .attr("class", (node) => `network-node is-${node.type} direction-${node.direction}`)
       .attr("tabindex", 0)
       .attr("role", "button")
-      .attr("aria-label", (node) => `${node.type === "stock" ? "股票" : "主题"} ${node.label}，${node.mentions} 个事件，${directionLabels[node.direction]}`)
+      .attr("aria-label", (node) => `${node.type === "stock" ? "股票" : "主题"} ${analysisNodeLabel(node)}，${node.mentions} 个事件，${directionLabels[node.direction]}`)
       .style("cursor", (node) => node.type === "stock" ? "pointer" : "grab")
       .on("mouseenter", (event, node) => {
         activateNode(node);
@@ -311,9 +317,9 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .attr("class", "network-label")
       .attr("x", (node) => node.type === "stock" ? 17 : 13)
       .attr("y", 4)
-      .text((node) => node.label.length > 8 ? `${node.label.slice(0, 8)}…` : node.label);
+      .text(compactAnalysisNodeLabel);
     nodeSelection.append("title")
-      .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${node.label}${node.symbol ? ` (${node.symbol})` : ""} · ${node.mentions} 个事件 · ${directionLabels[node.direction]}${node.marketReaction ? ` · ${reactionLabel(node)}` : ""}`);
+      .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${analysisNodeLabel(node)}${node.symbol ? ` (${node.symbol})` : ""} · ${node.mentions} 个事件 · ${directionLabels[node.direction]}${node.marketReaction ? ` · ${reactionLabel(node)}` : ""}`);
 
     const labelFacesLeft = (node: SimNode) => (node.x || 0) > size.width - NETWORK_LABEL_MAX_WIDTH
       || ((node.y || 0) < NETWORK_CONTROLS_BOTTOM + NETWORK_NODE_RADIUS
@@ -421,7 +427,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
             <strong>{relationshipLabels[linkPreview.link.type]}</strong>
             <span>{confidenceLabels[linkPreview.link.confidence]}</span>
           </header>
-          <p>{nodes.find((node) => node.id === linkPreview.link.source)?.label || linkPreview.link.source} ↔ {nodes.find((node) => node.id === linkPreview.link.target)?.label || linkPreview.link.target}</p>
+          <p>{nodeLabel(nodes, linkPreview.link.source)} ↔ {nodeLabel(nodes, linkPreview.link.target)}</p>
           <div><span>共同事件 {linkPreview.link.cooccurrenceCount}</span><span>NPMI {linkPreview.link.npmi.toFixed(2)}</span></div>
           <ul>
             {!linkPreview.link.evidence.length ? <li className="is-empty">证据标题暂不可用</li> : null}

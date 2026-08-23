@@ -1,5 +1,6 @@
 import type { AnalysisLink, AnalysisNode } from "../../shared/types";
 import { confidenceLabels, relationshipLabels, sourceLabels } from "../lib/relationships";
+import { analysisNodeLabel } from "../lib/stocks";
 import { formatFull } from "../lib/time";
 
 interface RelationshipListProps {
@@ -18,8 +19,8 @@ export function RelationshipList({ nodes, links, emptyMessage }: RelationshipLis
       {links.map((link) => {
         const sourceNode = nodeById.get(link.source);
         const targetNode = nodeById.get(link.target);
-        const source = sourceNode?.label || link.source.replace(/^[^:]+:/, "");
-        const target = targetNode?.label || link.target.replace(/^[^:]+:/, "");
+        const source = sourceNode ? analysisNodeLabel(sourceNode) : link.source.replace(/^[^:]+:/, "");
+        const target = targetNode ? analysisNodeLabel(targetNode) : link.target.replace(/^[^:]+:/, "");
         const evidence = link.evidence || [];
         return (
           <details className="relationship-list-item" key={`${link.type}:${link.source}:${link.target}`}>

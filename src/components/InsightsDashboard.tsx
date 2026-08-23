@@ -8,6 +8,7 @@ import { StockNetwork } from "./StockNetwork";
 import { WordCloud } from "./WordCloud";
 import { apiUrl } from "../lib/api";
 import { confidenceRank, relationshipLabels } from "../lib/relationships";
+import { analysisNodeLabel } from "../lib/stocks";
 
 const analysisWindows = [
   { hours: 1, label: "近 1 小时" },
@@ -151,7 +152,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
     const linkedNodeIds = new Set(filteredLinks.flatMap((link) => [link.source, link.target]));
     return (active?.nodes || []).filter((node) => linkedNodeIds.has(node.id));
   }, [active, filteredLinks]);
-  const nodeLabels = useMemo(() => new Map((active?.nodes || []).map((node) => [node.id, node.label])), [active]);
+  const nodeLabels = useMemo(() => new Map((active?.nodes || []).map((node) => [node.id, analysisNodeLabel(node)])), [active]);
   const graphEmptyMessage = !active && loading
     ? "正在加载关系证据"
     : graphLinks.length
@@ -230,7 +231,7 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
         const counterpartId = link.source === node.id ? link.target : link.source;
         return { link, counterpartLabel: nodeLabels.get(counterpartId) || counterpartId.replace(/^[^:]+:/, "") };
       });
-    return { type: "stock", value: node.symbol || node.label, label: node.label, anchor, relationships };
+    return { type: "stock", value: node.symbol || node.label, label: analysisNodeLabel(node), anchor, relationships };
   }, [filteredLinks, nodeLabels]);
 
   const previewStock = useCallback((node: AnalysisNode, anchor: { x: number; y: number }) => {
