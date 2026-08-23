@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import * as d3 from "d3";
 import { RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import type { AnalysisLink, AnalysisNode } from "../../shared/types";
@@ -56,6 +56,35 @@ const directionLabels: Record<AnalysisNode["direction"], string> = {
 function signedPercent(value: number | null) {
   if (value == null) return "--";
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function periodChangeClass(node: AnalysisNode) {
+  if (node.type !== "stock" || node.periodChange?.status !== "available" || node.periodChange.changePercent == null) {
+    return node.type === "stock" ? "price-unavailable" : "";
+  }
+  if (node.periodChange.changePercent > 0) return "price-up";
+  if (node.periodChange.changePercent < 0) return "price-down";
+  return "price-flat";
+}
+
+function periodChangeStrength(node: AnalysisNode) {
+  const change = node.periodChange?.status === "available" ? node.periodChange.changePercent : null;
+  return change == null ? 0 : Math.round(24 + Math.min(1, Math.abs(change) / 10) * 68);
+}
+
+function periodChangeStyle(node: AnalysisNode) {
+  return { "--price-strength": `${periodChangeStrength(node)}%` } as CSSProperties;
+}
+
+function periodChangeLabel(node: AnalysisNode, detailed = false) {
+  const change = node.periodChange;
+  if (change?.status !== "available" || change.changePercent == null) {
+    return detailed && change?.reason ? `周期涨跌不可用：${change.reason}` : "周期涨跌 --";
+  }
+  const range = detailed && change.from && change.to
+    ? ` · 行情区间 ${formatFull(change.from)} 至 ${formatFull(change.to)}`
+    : "";
+  return `周期涨跌 ${signedPercent(change.changePercent)}${range}`;
 }
 
 function reactionLabel(node: AnalysisNode) {
@@ -245,10 +274,11 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .selectAll<SVGGElement, SimNode>("g")
       .data(graphNodes)
       .join("g")
-      .attr("class", (node) => `network-node is-${node.type} direction-${node.direction}`)
+      .attr("class", (node) => `network-node is-${node.type} direction-${node.direction} ${periodChangeClass(node)}`)
       .attr("tabindex", 0)
       .attr("role", "button")
-      .attr("aria-label", (node) => `${node.type === "stock" ? "股票" : "主题"} ${analysisNodeLabel(node)}，${node.mentions} 个事件，${directionLabels[node.direction]}`)
+      .attr("aria-label", (node) => `${node.type === "stock" ? "股票" : "主题"} ${analysisNodeLabel(node)}，${node.type === "stock" ? `${periodChangeLabel(node)}，` : ""}${node.mentions} 个事件，舆情${directionLabels[node.direction]}`)
+      .style("--price-strength", (node) => `${periodChangeStrength(node)}%`)
       .style("cursor", (node) => node.type === "stock" ? "pointer" : "grab")
       .on("mouseenter", (event, node) => {
         activateNode(node);
@@ -297,19 +327,15 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .attr("class", "network-node-core")
       .attr("r", (node) => Math.min(13, 5 + Math.sqrt(node.mentions) * 1.4));
 
-    nodeSelection.append("circle")
+    nodeSelection.filter((node) => node.type === "topic").append("circle")
       .attr("class", "network-direction-dot")
       .attr("cx", (node) => {
-        const radius = node.type === "stock"
-          ? Math.min(14, 7 + Math.sqrt(node.mentions) * 2)
-          : Math.min(13, 5 + Math.sqrt(node.mentions) * 1.4);
-        return node.type === "stock" ? radius - 1 : radius * .72;
+        const radius = Math.min(13, 5 + Math.sqrt(node.mentions) * 1.4);
+        return radius * .72;
       })
       .attr("cy", (node) => {
-        const radius = node.type === "stock"
-          ? Math.min(14, 7 + Math.sqrt(node.mentions) * 2)
-          : Math.min(13, 5 + Math.sqrt(node.mentions) * 1.4);
-        return node.type === "stock" ? -radius + 1 : -radius * .72;
+        const radius = Math.min(13, 5 + Math.sqrt(node.mentions) * 1.4);
+        return -radius * .72;
       })
       .attr("r", 3.2);
 
@@ -319,7 +345,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .attr("y", 4)
       .text(compactAnalysisNodeLabel);
     nodeSelection.append("title")
-      .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${analysisNodeLabel(node)}${node.symbol ? ` (${node.symbol})` : ""} · ${node.mentions} 个事件 · ${directionLabels[node.direction]}${node.marketReaction ? ` · ${reactionLabel(node)}` : ""}`);
+      .text((node) => `${node.type === "stock" ? "股票" : "主题"}：${analysisNodeLabel(node)}${node.symbol ? ` (${node.symbol})` : ""}${node.type === "stock" ? ` · ${periodChangeLabel(node, true)}` : ""} · ${node.mentions} 个事件 · 舆情${directionLabels[node.direction]}${node.marketReaction ? ` · ${reactionLabel(node)}` : ""}`);
 
     const labelFacesLeft = (node: SimNode) => (node.x || 0) > size.width - NETWORK_LABEL_MAX_WIDTH
       || ((node.y || 0) < NETWORK_CONTROLS_BOTTOM + NETWORK_NODE_RADIUS
@@ -442,11 +468,11 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
         </div>
       ) : null}
       {selected ? (
-        <div className={`network-selection direction-${selected.direction}`}>
+        <div className={`network-selection direction-${selected.direction} ${periodChangeClass(selected)}`} style={periodChangeStyle(selected)}>
           <i className={`is-${selected.type}`} />
           <strong>{analysisNodeLabel(selected)}</strong>
           {selected.symbol ? <span>{selected.symbol}</span> : null}
-          <span title={reactionLabel(selected)}>{selected.mentions} 个事件 · {directionLabels[selected.direction]}{selected.marketReaction ? ` · ${reactionLabel(selected)}` : ""}</span>
+          <span title={`${selected.type === "stock" ? `${periodChangeLabel(selected, true)} · ` : ""}${reactionLabel(selected)}`}>{selected.type === "stock" ? `${periodChangeLabel(selected)} · ` : ""}{selected.mentions} 个事件 · 舆情{directionLabels[selected.direction]}{selected.marketReaction ? ` · ${reactionLabel(selected)}` : ""}</span>
         </div>
       ) : null}
     </div>

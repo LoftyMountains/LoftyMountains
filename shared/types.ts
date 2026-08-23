@@ -54,6 +54,14 @@ export interface AnalysisMarketReaction {
   excessReturn1d: number | null;
 }
 
+export interface AnalysisPeriodChange {
+  status: "available" | "unavailable";
+  reason?: string;
+  changePercent: number | null;
+  from: string | null;
+  to: string | null;
+}
+
 export interface AnalysisNode {
   id: string;
   label: string;
@@ -63,6 +71,7 @@ export interface AnalysisNode {
   symbol?: string;
   direction: "positive" | "negative" | "mixed" | "neutral";
   directionScore: number;
+  periodChange?: AnalysisPeriodChange;
   marketReaction?: AnalysisMarketReaction;
 }
 

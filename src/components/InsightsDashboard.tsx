@@ -340,7 +340,12 @@ export function InsightsDashboard({ revision }: { revision: string | null }) {
           <header>
             <div><Share2 size={17} /><h2 id="stock-network-title">{networkView === "graph" ? "关联股票图" : "关联关系列表"}</h2></div>
             <div className="network-header-tools">
-              <div className="network-legend"><span><i className="is-stock" />股票</span><span><i className="is-topic" />主题</span></div>
+              <div className="network-legend" aria-label="股票周期涨跌颜色图例">
+                <span><i className="is-stock price-up" />涨</span>
+                <span><i className="is-stock price-down" />跌</span>
+                <span><i className="is-stock price-unavailable" />无行情</span>
+                <span><i className="is-topic" />主题</span>
+              </div>
               <div className="network-view-switch" role="group" aria-label="关联数据视图">
                 <button type="button" className={networkView === "graph" ? "is-active" : ""} aria-pressed={networkView === "graph"} onClick={() => setNetworkView("graph")} title="图谱视图"><Share2 size={13} /><span>图谱</span></button>
                 <button type="button" className={networkView === "list" ? "is-active" : ""} aria-pressed={networkView === "list"} onClick={() => setNetworkView("list")} title="列表视图"><ListTree size={13} /><span>列表</span></button>

@@ -653,13 +653,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .network-link-hits line { outline: none; }
 .network-link-hits line:focus-visible { stroke: var(--gold); stroke-opacity: .18; }
 .network-node { outline: none; }
-.network-node .network-node-core { stroke: var(--signal-neutral); stroke-width: 1.5px; vector-effect: non-scaling-stroke; transition: filter .15s ease, stroke-width .15s ease; }
+.network-node .network-node-core { stroke: var(--signal-neutral); stroke-width: 1.5px; vector-effect: non-scaling-stroke; transition: fill .15s ease, filter .15s ease, stroke-width .15s ease; }
 .network-node.is-stock .network-node-core { fill: var(--network-stock-fill); }
 .network-node.is-topic .network-node-core { fill: var(--network-topic-fill); }
-.network-node.direction-positive .network-node-core { stroke: var(--signal-positive); }
-.network-node.direction-negative .network-node-core { stroke: var(--signal-negative); }
-.network-node.direction-mixed .network-node-core { stroke: var(--signal-mixed); }
-.network-node.direction-neutral .network-node-core { stroke: var(--signal-neutral); }
+.network-node.is-stock.price-up .network-node-core { fill: color-mix(in srgb, var(--network-stock-fill), var(--signal-positive) var(--price-strength)); stroke: var(--signal-positive); }
+.network-node.is-stock.price-down .network-node-core { fill: color-mix(in srgb, var(--network-stock-fill), var(--signal-negative) var(--price-strength)); stroke: var(--signal-negative); }
+.network-node.is-stock.price-flat .network-node-core, .network-node.is-stock.price-unavailable .network-node-core { fill: var(--network-stock-fill); stroke: var(--signal-neutral); }
+.network-node.is-topic.direction-positive .network-node-core { stroke: var(--signal-positive); }
+.network-node.is-topic.direction-negative .network-node-core { stroke: var(--signal-negative); }
+.network-node.is-topic.direction-mixed .network-node-core { stroke: var(--signal-mixed); }
+.network-node.is-topic.direction-neutral .network-node-core { stroke: var(--signal-neutral); }
 .network-node .network-direction-dot { fill: var(--signal-neutral); stroke: var(--network-node-dot-stroke); stroke-width: 1.25px; vector-effect: non-scaling-stroke; }
 .network-node.direction-positive .network-direction-dot { fill: var(--signal-positive); }
 .network-node.direction-negative .network-direction-dot { fill: var(--signal-negative); }
@@ -698,11 +701,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .network-selection.direction-negative i { border-color: var(--signal-negative); }
 .network-selection.direction-mixed i { border-color: var(--signal-mixed); }
 .network-selection.direction-neutral i { border-color: var(--signal-neutral); }
+.network-selection.price-up { border-left-color: var(--signal-positive); }
+.network-selection.price-down { border-left-color: var(--signal-negative); }
+.network-selection.price-flat, .network-selection.price-unavailable { border-left-color: var(--signal-neutral); }
+.network-selection.price-up i.is-stock { border-color: var(--signal-positive); background: color-mix(in srgb, var(--network-stock-fill), var(--signal-positive) var(--price-strength)); }
+.network-selection.price-down i.is-stock { border-color: var(--signal-negative); background: color-mix(in srgb, var(--network-stock-fill), var(--signal-negative) var(--price-strength)); }
 .network-selection strong { color: var(--text); font-size: 11px; }
 .network-selection span:first-of-type { color: var(--gold); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .network-selection span:last-child { margin-left: auto; white-space: nowrap; }
-.network-legend { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 9px; }
+.network-legend { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 9px; }
 .network-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.network-legend i.is-stock.price-up { width: 16px; border-color: var(--signal-positive); background: linear-gradient(90deg, color-mix(in srgb, var(--network-stock-fill), var(--signal-positive) 25%), color-mix(in srgb, var(--network-stock-fill), var(--signal-positive) 92%)); }
+.network-legend i.is-stock.price-down { width: 16px; border-color: var(--signal-negative); background: linear-gradient(90deg, color-mix(in srgb, var(--network-stock-fill), var(--signal-negative) 25%), color-mix(in srgb, var(--network-stock-fill), var(--signal-negative) 92%)); }
 .network-header-tools { display: flex; align-items: center; gap: 12px; }
 .network-view-switch { height: 30px; display: inline-grid; grid-template-columns: 1fr 1fr; padding: 2px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface-2); }
 .network-view-switch button { min-width: 50px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 7px; border: 0; border-radius: 2px; background: transparent; color: var(--muted); font-size: 9px; cursor: pointer; }
