@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ArrowUpRight, CircleAlert, LoaderCircle, Newspaper } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowUpRight, CircleAlert, LoaderCircle, Newspaper, PanelRightClose } from "lucide-react";
 import type { AnalysisLink, NewsItem } from "../../shared/types";
 import { apiUrl } from "../lib/api";
 import { confidenceLabels, relationshipLabels, sourceLabels } from "../lib/relationships";
@@ -21,9 +21,52 @@ interface RelatedNewsPanelProps {
   selection: RelatedNewsSelection | null;
   from: string | null;
   to: string | null;
+  collapsed: boolean;
+  peeking: boolean;
+  onCollapse: () => void;
 }
 
-export function RelatedNewsPanel({ selection, from, to }: RelatedNewsPanelProps) {
+interface RelatedNewsCacheEntry {
+  items: NewsItem[];
+  storedAt: number;
+}
+
+const relatedNewsCache = new Map<string, RelatedNewsCacheEntry>();
+const relatedNewsRequests = new Map<string, Promise<NewsItem[]>>();
+const relatedNewsCacheTtlMs = 10 * 60_000;
+const relatedNewsCacheLimit = 80;
+
+function readRelatedNewsCache(key: string) {
+  const cached = relatedNewsCache.get(key);
+  if (!cached || Date.now() - cached.storedAt > relatedNewsCacheTtlMs) {
+    if (cached) relatedNewsCache.delete(key);
+    return null;
+  }
+  relatedNewsCache.delete(key);
+  relatedNewsCache.set(key, cached);
+  return cached.items;
+}
+
+function loadRelatedNews(key: string, url: string) {
+  const pending = relatedNewsRequests.get(key);
+  if (pending) return pending;
+  const request = fetch(url)
+    .then(async (response) => {
+      if (!response.ok) throw new Error("相关快讯加载失败");
+      const payload = await response.json() as { items: NewsItem[] };
+      if (relatedNewsCache.size >= relatedNewsCacheLimit && !relatedNewsCache.has(key)) {
+        const oldest = relatedNewsCache.keys().next().value as string | undefined;
+        if (oldest) relatedNewsCache.delete(oldest);
+      }
+      relatedNewsCache.set(key, { items: payload.items, storedAt: Date.now() });
+      return payload.items;
+    })
+    .finally(() => relatedNewsRequests.delete(key));
+  relatedNewsRequests.set(key, request);
+  return request;
+}
+
+export function RelatedNewsPanel({ selection, from, to, collapsed, peeking, onCollapse }: RelatedNewsPanelProps) {
   const [items, setItems] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,34 +81,53 @@ export function RelatedNewsPanel({ selection, from, to }: RelatedNewsPanelProps)
       setError(null);
       return;
     }
-    const controller = new AbortController();
     const params = new URLSearchParams({ from, to, type: selection.type, value: selection.value });
+    const key = params.toString();
+    const cached = readRelatedNewsCache(key);
+    if (cached) {
+      setItems(cached);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let active = true;
     setItems([]);
     setLoading(true);
     setError(null);
-    void fetch(`${apiUrl("/api/analysis/news")}?${params}`, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("相关快讯加载失败");
-        const payload = await response.json() as { items: NewsItem[] };
-        setItems(payload.items);
-      })
-      .catch((reason: unknown) => {
-        if (reason instanceof DOMException && reason.name === "AbortError") return;
-        setError(reason instanceof Error ? reason.message : "相关快讯加载失败");
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
+    const timer = window.setTimeout(() => {
+      void loadRelatedNews(key, `${apiUrl("/api/analysis/news")}?${params}`)
+        .then((loadedItems) => {
+          if (active) setItems(loadedItems);
+        })
+        .catch((reason: unknown) => {
+          if (!active) return;
+          setError(reason instanceof Error ? reason.message : "相关快讯加载失败");
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    }, 60);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
   }, [from, selection, to]);
 
   const relationships = selection?.relationships || [];
   const evidenceCount = new Set(relationships.flatMap((relationship) =>
     (relationship.link.evidence || []).map((evidence) => evidence.eventId)
   )).size;
+  const evidencePreview = useMemo(() => {
+    const seen = new Set<string>();
+    return relationships
+      .flatMap((relationship) => relationship.link.evidence || [])
+      .filter((evidence) => !seen.has(evidence.eventId) && Boolean(seen.add(evidence.eventId)))
+      .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
+      .slice(0, 8);
+  }, [relationships]);
 
   return (
-    <section className={`insight-news-panel ${selection?.type === "stock" ? "has-tabs" : ""}`} aria-labelledby="related-news-title" aria-live="polite">
+    <section id="related-news-shell" className={`insight-news-panel ${selection?.type === "stock" ? "has-tabs" : ""} ${collapsed ? "is-collapsed" : ""} ${peeking ? "is-auto-peek" : ""}`} aria-labelledby="related-news-title" aria-live="polite" aria-hidden={collapsed || undefined}>
       <header>
         <div className="insight-panel-title">
           <Newspaper size={15} />
@@ -74,7 +136,10 @@ export function RelatedNewsPanel({ selection, from, to }: RelatedNewsPanelProps)
             <h2 id="related-news-title">{selection?.label || "市场情报"}</h2>
           </div>
         </div>
-        <strong>{selection ? (loading ? "检索中" : `${items.length} 条`) : "待命"}</strong>
+        <div className="insight-panel-actions">
+          <strong>{selection ? (loading ? "检索中" : `${items.length} 条`) : "待命"}</strong>
+          <button id="related-news-collapse" type="button" className="insight-panel-collapse" onClick={onCollapse} aria-controls="related-news-shell" aria-expanded="true" title="折叠相关新闻" aria-label="折叠相关新闻"><PanelRightClose size={15} /></button>
+        </div>
       </header>
 
       {selection?.type === "stock" ? (
@@ -87,7 +152,19 @@ export function RelatedNewsPanel({ selection, from, to }: RelatedNewsPanelProps)
       {!selection ? <div className="insight-panel-empty"><Newspaper size={22} /><span>市场情报待命</span></div> : null}
       {selection && view === "news" ? (
         <div id="related-news-panel" className="related-news-list" role={selection.type === "stock" ? "tabpanel" : undefined} aria-labelledby={selection.type === "stock" ? "related-news-tab" : undefined} aria-busy={loading}>
-          {loading ? <div className="related-news-state"><LoaderCircle className="is-spinning" size={20} /><span>正在汇总相关快讯</span></div> : null}
+          {loading && !evidencePreview.length ? <div className="related-news-state"><LoaderCircle className="is-spinning" size={20} /><span>正在汇总相关快讯</span></div> : null}
+          {loading && evidencePreview.length ? evidencePreview.map((evidence) => (
+            <article className={`related-news-item is-evidence-preview source-${evidence.sources[0] || "unknown"}`} key={evidence.eventId}>
+              <i className="related-news-source-mark" />
+              <div>
+                <div className="related-news-meta">
+                  <span>{evidence.sources.map((source) => sourceLabels[source]).join(" · ")}</span>
+                  <time dateTime={evidence.publishedAt}>{formatFull(evidence.publishedAt)}</time>
+                </div>
+                <h3>{evidence.title}</h3>
+              </div>
+            </article>
+          )) : null}
           {error ? <div className="related-news-state is-error"><CircleAlert size={20} /><span>{error}</span></div> : null}
           {!loading && !error && !items.length ? <div className="related-news-state"><CircleAlert size={20} /><span>当前周期没有相关快讯</span></div> : null}
           {!loading && !error ? items.map((item) => (

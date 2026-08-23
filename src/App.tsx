@@ -61,9 +61,7 @@ function InsightsFallback({ compact = false }: { compact?: boolean }) {
       <header className="insights-heading">
         <div><span className="eyebrow">MARKET INTELLIGENCE</span><h1>热点与股票关联</h1></div>
       </header>
-      <div className="analysis-windows">
-        {Array.from({ length: 4 }, (_, index) => <div className="window-skeleton" key={index} />)}
-      </div>
+      <div className="insights-workbench" />
     </section>
   );
 }

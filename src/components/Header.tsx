@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, ChartNoAxesCombined, Github, Monitor, Moon, Radio, Sun, Wifi, WifiOff } from "lucide-react";
+import { Activity, ArrowLeft, ChartNoAxesCombined, Github, Monitor, Moon, Radio, SlidersHorizontal, Sun } from "lucide-react";
 import type { SourceStatus } from "../../shared/types";
 import type { ThemeMode } from "../lib/theme";
 import { formatClock, formatDay } from "../lib/time";
@@ -22,9 +22,10 @@ const themeOptions = [
 
 export function Header({ connected, serverTime, sources, theme, insightsActive, signalsHidden, onInsightsClick, onThemeChange }: HeaderProps) {
   const liveCount = sources.filter((source) => source.state === "live").length;
+  const pageMode = insightsActive ? "市场洞察" : "实时市场";
   return (
     <>
-      <header className="topbar">
+      <header className={`topbar ${insightsActive ? "is-insights-active" : ""}`}>
         <div className="brand" aria-label="景行 Jingxing">
           <img className="brand-mark" src={`${import.meta.env.BASE_URL}brand/jingxing-mark.svg?v=finance-1`} alt="" aria-hidden="true" />
           <div>
@@ -33,17 +34,32 @@ export function Header({ connected, serverTime, sources, theme, insightsActive, 
           </div>
         </div>
 
-        <div className="topbar-center" aria-label="北京时间">
-          <span className="header-date">{formatDay(serverTime)}</span>
-          <strong>{formatClock(serverTime)}</strong>
-          <span className="timezone">UTC+8</span>
+        <div
+          className={`dynamic-island ${connected ? "is-connected" : "is-reconnecting"} ${insightsActive ? "is-touchbar" : ""}`}
+          tabIndex={0}
+          aria-label={insightsActive
+            ? `热点与股票关联控制条，${connected ? "实时连接" : "正在重连"}`
+            : `北京时间 ${formatClock(serverTime)}，${connected ? "实时连接" : "正在重连"}，${liveCount} 个数据源在线，当前为${pageMode}`}
+        >
+          <div className="dynamic-island-primary">
+            <i className="dynamic-island-dot" aria-hidden="true" />
+            <time dateTime={serverTime}>{formatClock(serverTime)}</time>
+            <span>{connected ? "实时" : "重连"}</span>
+          </div>
+          <div className="dynamic-island-details" aria-hidden="true">
+            <span><small>日期</small>{formatDay(serverTime)}</span>
+            <span><small>时区</small>UTC+8</span>
+            <span><small>信号源</small>{liveCount}/{sources.length || 0} 在线</span>
+            <span><small>视图</small>{pageMode}</span>
+          </div>
+          <div className="touchbar-compact" aria-hidden={!insightsActive || undefined}>
+            <SlidersHorizontal size={15} />
+            <span>关联控制</span>
+          </div>
+          <div id="insights-touchbar-slot" className="insights-touchbar-slot" aria-hidden={!insightsActive || undefined} />
         </div>
 
         <div className="topbar-actions">
-          <div className={`connection-state ${connected ? "is-connected" : ""}`}>
-            {connected ? <Wifi size={15} /> : <WifiOff size={15} />}
-            <span>{connected ? "实时连接" : "正在重连"}</span>
-          </div>
           <button
             className={`text-button header-insights-button ${insightsActive ? "is-active" : ""}`}
             onClick={onInsightsClick}

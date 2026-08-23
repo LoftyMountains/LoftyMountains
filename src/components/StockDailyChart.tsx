@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChartNoAxesCombined, CircleAlert, LoaderCircle } from "lucide-react";
+import { ChartNoAxesCombined, CircleAlert, LoaderCircle, PanelRightClose } from "lucide-react";
 import type { AnalysisDailyPoint, AnalysisDailySeries, AnalysisNode } from "../../shared/types";
 import { apiUrl } from "../lib/api";
 import { analysisNodeLabel } from "../lib/stocks";
@@ -59,7 +59,14 @@ function signedPercent(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
-export function StockDailyChart({ node }: { node: AnalysisNode }) {
+interface StockDailyChartProps {
+  node: AnalysisNode;
+  collapsed: boolean;
+  peeking: boolean;
+  onCollapse: () => void;
+}
+
+export function StockDailyChart({ node, collapsed, peeking, onCollapse }: StockDailyChartProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [points, setPoints] = useState<AnalysisDailyPoint[]>(node.dailyPrices || []);
@@ -116,7 +123,7 @@ export function StockDailyChart({ node }: { node: AnalysisNode }) {
   };
 
   return (
-    <section className={`stock-daily-panel is-${direction}`} aria-labelledby="stock-daily-title">
+    <section id="stock-daily-shell" className={`stock-daily-panel is-${direction} ${collapsed ? "is-collapsed" : ""} ${peeking ? "is-auto-peek" : ""}`} aria-labelledby="stock-daily-title" aria-hidden={collapsed || undefined}>
       <header>
         <div className="insight-panel-title">
           <ChartNoAxesCombined size={15} />
@@ -125,10 +132,13 @@ export function StockDailyChart({ node }: { node: AnalysisNode }) {
             <h2 id="stock-daily-title">{analysisNodeLabel(node)}</h2>
           </div>
         </div>
-        <div className="daily-quote">
-          <strong>{selected?.close.toFixed(2) || "--"}</strong>
-          <span>{selected ? shortDate(selected.date) : "--"}</span>
-          {selectedChange !== null ? <b className={selectedChange > 0 ? "is-up" : selectedChange < 0 ? "is-down" : "is-flat"}>{signedPercent(selectedChange)}</b> : null}
+        <div className="insight-panel-actions">
+          <div className="daily-quote">
+            <strong>{selected?.close.toFixed(2) || "--"}</strong>
+            <span>{selected ? shortDate(selected.date) : "--"}</span>
+            {selectedChange !== null ? <b className={selectedChange > 0 ? "is-up" : selectedChange < 0 ? "is-down" : "is-flat"}>{signedPercent(selectedChange)}</b> : null}
+          </div>
+          <button id="daily-chart-collapse" type="button" className="insight-panel-collapse" onClick={onCollapse} aria-controls="stock-daily-shell" aria-expanded="true" title="折叠日 K 线图" aria-label="折叠日 K 线图"><PanelRightClose size={15} /></button>
         </div>
       </header>
       {!model ? <div className={`insight-panel-empty ${error ? "is-error" : ""}`}>

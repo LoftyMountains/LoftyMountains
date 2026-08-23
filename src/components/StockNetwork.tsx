@@ -326,32 +326,26 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .on("mouseenter", (event, node) => {
         activateNode(node);
         setSelected(node);
-        if (node.type === "stock") onPreview?.(node, { x: event.clientX, y: event.clientY });
+        onPreview?.(node, { x: event.clientX, y: event.clientY });
       })
-      .on("mouseleave", (_event, node) => {
-        if (node.type === "stock") onPreviewEnd?.();
-      })
+      .on("mouseleave", () => onPreviewEnd?.())
       .on("focus", (event, node) => {
         activateNode(node);
         setSelected(node);
-        if (node.type !== "stock") return;
         const bounds = (event.currentTarget as SVGGElement).getBoundingClientRect();
         onPreview?.(node, { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 });
       })
-      .on("blur", (_event, node) => {
-        if (node.type === "stock") onPreviewEnd?.();
-      })
+      .on("blur", () => onPreviewEnd?.())
       .on("click", (event, node) => {
         event.stopPropagation();
         setSelected(node);
-        if (node.type === "stock") onTogglePreview?.(node, { x: event.clientX, y: event.clientY });
+        onTogglePreview?.(node, { x: event.clientX, y: event.clientY });
       })
       .on("keydown", (event, node) => {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         event.stopPropagation();
         setSelected(node);
-        if (node.type !== "stock") return;
         const bounds = (event.currentTarget as SVGGElement).getBoundingClientRect();
         onTogglePreview?.(node, { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 });
       });

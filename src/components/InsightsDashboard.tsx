@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, ScanSearch, Share2 } from "lucide-react";
+import { ChevronDown, PanelLeftClose, PanelLeftOpen, PanelRightOpen, RefreshCw, ScanSearch, Share2 } from "lucide-react";
+import { createPortal } from "react-dom";
 import type { AnalysisLink, AnalysisNode, AnalysisPayload, AnalysisRelationshipType, AnalysisWindow, AnalysisWord } from "../../shared/types";
 import { apiUrl } from "../lib/api";
 import { confidenceRank, relationshipLabels } from "../lib/relationships";
@@ -62,14 +63,23 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
   const [minimumConfidence, setMinimumConfidence] = useState<ConfidenceFilter>("medium");
   const [minimumEvents, setMinimumEvents] = useState(3);
   const [densityMode, setDensityMode] = useState<DensityMode>("overview");
+  const [wordCloudCollapsed, setWordCloudCollapsed] = useState(false);
+  const [rightPanelsCollapsed, setRightPanelsCollapsed] = useState(false);
+  const [rightPanelsPeeking, setRightPanelsPeeking] = useState(false);
+  const [touchbarHost, setTouchbarHost] = useState<HTMLElement | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const cacheRef = useRef<CachedAnalysis | null>(cache);
   const loadingAnalysis = useRef(false);
+  const autoPeekCloseTimer = useRef<number | null>(null);
 
   useEffect(() => {
     cacheRef.current = cache;
   }, [cache]);
+
+  useEffect(() => {
+    setTouchbarHost(document.getElementById("insights-touchbar-slot"));
+  }, []);
 
   const load = useCallback(async (revalidate = false) => {
     const cached = cacheRef.current;
@@ -154,10 +164,21 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
     .filter((node) => node.type === "topic")
     .map((node) => node.label), [filteredNodes]);
 
+  const clearAutoPeek = useCallback(() => {
+    if (autoPeekCloseTimer.current !== null) window.clearTimeout(autoPeekCloseTimer.current);
+    autoPeekCloseTimer.current = null;
+    setRightPanelsPeeking(false);
+  }, []);
+
   const clearSelection = useCallback(() => {
+    clearAutoPeek();
     setSelectedWord(null);
     setSelectedStock(null);
     setRelatedSelection(null);
+  }, [clearAutoPeek]);
+
+  useEffect(() => () => {
+    if (autoPeekCloseTimer.current !== null) window.clearTimeout(autoPeekCloseTimer.current);
   }, []);
 
   useEffect(clearSelection, [clearSelection, selectedHours]);
@@ -176,11 +197,28 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
     }
   }, [densityMode]);
 
+  const setPanelCollapsed = useCallback((setter: (collapsed: boolean) => void, collapsed: boolean, focusId: string) => {
+    setter(collapsed);
+    window.requestAnimationFrame(() => {
+      const target = document.getElementById(focusId);
+      target?.focus({ preventScroll: true });
+      const canvas = target?.closest<HTMLElement>(".insights-canvas");
+      if (canvas) canvas.scrollLeft = 0;
+    });
+  }, []);
+
+  const beginPanelPreview = useCallback(() => {
+    if (autoPeekCloseTimer.current !== null) window.clearTimeout(autoPeekCloseTimer.current);
+    autoPeekCloseTimer.current = null;
+    setRightPanelsPeeking(true);
+  }, []);
+
   const previewWord = useCallback((word: AnalysisWord) => {
+    beginPanelPreview();
     setSelectedWord(word);
     setSelectedStock(null);
     setRelatedSelection({ type: "topic", value: word.text, label: word.text });
-  }, []);
+  }, [beginPanelPreview]);
 
   const stockSelection = useCallback((node: AnalysisNode): RelatedNewsSelection => {
     const relationships = filteredLinks
@@ -192,16 +230,108 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
     return { type: "stock", value: node.symbol || node.label, label: analysisNodeLabel(node), relationships };
   }, [filteredLinks, nodeLabels]);
 
-  const previewStock = useCallback((node: AnalysisNode) => {
+  const previewNetworkNode = useCallback((node: AnalysisNode) => {
+    beginPanelPreview();
+    if (node.type === "topic") {
+      const word = active?.words.find((candidate) => candidate.text === node.label) || null;
+      setSelectedWord(word);
+      setSelectedStock(null);
+      setRelatedSelection({ type: "topic", value: node.label, label: node.label });
+      return;
+    }
     setSelectedWord(null);
     setSelectedStock(node);
     setRelatedSelection(stockSelection(node));
-  }, [stockSelection]);
+  }, [active?.words, beginPanelPreview, stockSelection]);
 
-  const preserveSelection = useCallback(() => undefined, []);
+  const endPanelPreview = useCallback(() => {
+    if (autoPeekCloseTimer.current !== null) window.clearTimeout(autoPeekCloseTimer.current);
+    autoPeekCloseTimer.current = window.setTimeout(() => {
+      setRightPanelsPeeking(false);
+      autoPeekCloseTimer.current = null;
+    }, 140);
+  }, []);
 
   return (
-    <section id="market-insights" className={`insights-dashboard ${compact ? "is-compact" : ""}`} aria-labelledby="market-insights-title">
+    <>
+      {touchbarHost ? createPortal(
+        <div className={`insights-touchbar density-${densityMode}`} aria-label="热点与股票关联控制">
+          <div className="touchbar-title"><Share2 size={14} /><span>关联控制</span></div>
+          <div className="touchbar-periods" role="tablist" aria-label="统计时间窗口">
+            <span>周期</span>
+            <div>
+              {analysisWindows.map((option) => {
+                const summary = summariesByHours.get(option.hours);
+                const shortLabel = option.hours === 1 ? "1H" : option.hours === 24 ? "1D" : option.hours === 168 ? "1W" : "1M";
+                const detail = summary
+                  ? `${option.label} · ${summary.eventCount} 个事件 · ${coverageLabel(summary.coverageRatio, summary.complete)}`
+                  : `${option.label} · 数据加载中`;
+                return (
+                  <button
+                    type="button"
+                    role="tab"
+                    key={option.hours}
+                    className={selectedHours === option.hours ? "is-active" : ""}
+                    aria-selected={selectedHours === option.hours}
+                    aria-label={detail}
+                    title={detail}
+                    onClick={() => setSelectedHours(option.hours)}
+                  >
+                    {shortLabel}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <label className="touchbar-control is-relationship">
+            <span>关系</span>
+            <select value={relationshipType} onChange={(event) => setRelationshipType(event.target.value as RelationshipTypeFilter)} aria-label="关系类型">
+              <option value="all">全部关系</option>
+              {relationshipTypes.map((type) => <option value={type} key={type}>{relationshipLabels[type]}</option>)}
+            </select>
+            <ChevronDown aria-hidden="true" />
+          </label>
+          <label className="touchbar-control is-confidence">
+            <span>置信度</span>
+            <select value={minimumConfidence} onChange={(event) => setMinimumConfidence(event.target.value as ConfidenceFilter)} aria-label="最低置信度">
+              <option value="low">全部</option>
+              <option value="medium">中及以上</option>
+              <option value="high">仅高置信</option>
+            </select>
+            <ChevronDown aria-hidden="true" />
+          </label>
+          <label className="touchbar-control is-events">
+            <span>共同事件</span>
+            <select value={minimumEvents} onChange={(event) => setMinimumEvents(Number(event.target.value))} aria-label="最少共同事件">
+              {[1, 2, 3, 5].map((count) => <option value={count} key={count}>{count} 个</option>)}
+            </select>
+            <ChevronDown aria-hidden="true" />
+          </label>
+          <div className="touchbar-density" role="group" aria-label="信息密度">
+            <span>密度</span>
+            <div>
+              {(["overview", "analysis", "research"] as const).map((mode) => (
+                <button
+                  type="button"
+                  key={mode}
+                  className={densityMode === mode ? "is-active" : ""}
+                  aria-pressed={densityMode === mode}
+                  aria-label={`${mode === "overview" ? "概览" : mode === "analysis" ? "分析" : "研究"}密度`}
+                  title={`${mode === "overview" ? "概览" : mode === "analysis" ? "分析" : "研究"}密度`}
+                  onClick={() => setDensityMode(mode)}
+                >
+                  {mode === "overview" ? "概" : mode === "analysis" ? "析" : "研"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <output className="touchbar-result" title={`显示 ${filteredLinks.length} 条，共 ${graphLinks.length} 条关系`}>
+            <i />{filteredLinks.length}/{graphLinks.length}
+          </output>
+        </div>,
+        touchbarHost,
+      ) : null}
+      <section id="market-insights" className={`insights-dashboard ${compact ? "is-compact" : ""}`} aria-labelledby="market-insights-title">
       <header className="insights-heading">
         <div>
           <span className="eyebrow">MARKET INTELLIGENCE</span>
@@ -216,96 +346,29 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
         </div>
       </header>
 
-      <div className={`analysis-windows is-window-${analysisWindows.findIndex((option) => option.hours === selectedHours)}`} role="tablist" aria-label="统计时间窗口">
-        {analysisWindows.map((option) => {
-          const summary = summariesByHours.get(option.hours);
-          return (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={selectedHours === option.hours}
-              className={selectedHours === option.hours ? "is-active" : ""}
-              key={option.hours}
-              onClick={() => setSelectedHours(option.hours)}
-            >
-              <span>{option.label}</span>
-              <strong>{summary?.eventCount ?? "--"}</strong>
-              <small>
-                <b>{summary ? coverageLabel(summary.coverageRatio, summary.complete) : "覆盖率 --"}</b>
-                <span>{summary?.topTopic || "暂无热点"}</span>
-              </small>
-            </button>
-          );
-        })}
-      </div>
-
       {error ? <div className="analysis-error">{error}</div> : null}
       <div className="insights-workbench">
-        <header className={`insights-toolbar density-${densityMode}`}>
-          <div className="insights-toolbar-title"><Share2 size={16} /><div><span>关系底图</span><h2>市场关联全景</h2></div></div>
-          <div className="relationship-filters" aria-label="关联关系筛选">
-            <label>
-              <span>关系类型</span>
-              <select value={relationshipType} onChange={(event) => setRelationshipType(event.target.value as RelationshipTypeFilter)}>
-                <option value="all">全部关系</option>
-                {relationshipTypes.map((type) => <option value={type} key={type}>{relationshipLabels[type]}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>最低置信度</span>
-              <select value={minimumConfidence} onChange={(event) => setMinimumConfidence(event.target.value as ConfidenceFilter)}>
-                <option value="low">全部</option>
-                <option value="medium">中及以上</option>
-                <option value="high">仅高置信</option>
-              </select>
-            </label>
-            <label>
-              <span>最少共同事件</span>
-              <select value={minimumEvents} onChange={(event) => setMinimumEvents(Number(event.target.value))}>
-                {[1, 2, 3, 5].map((count) => <option value={count} key={count}>{count} 个</option>)}
-              </select>
-            </label>
-            <output aria-live="polite">{filteredLinks.length} / {graphLinks.length} 条</output>
-          </div>
-          <div className="density-switcher" role="group" aria-label="信息密度">
-            <span>密度</span>
-            {(["overview", "analysis", "research"] as const).map((mode) => (
-              <button
-                type="button"
-                key={mode}
-                className={densityMode === mode ? "is-active" : ""}
-                aria-pressed={densityMode === mode}
-                onClick={() => setDensityMode(mode)}
-              >
-                {mode === "overview" ? "概览" : mode === "analysis" ? "分析" : "研究"}
-              </button>
-            ))}
-          </div>
-          <div className="network-legend" aria-label="股票周期涨跌颜色图例">
-            <span><i className="is-stock price-up" />涨</span>
-            <span><i className="is-stock price-down" />跌</span>
-            <span><i className="is-stock price-unavailable" />无行情</span>
-            <span><i className="is-topic" />主题</span>
-          </div>
-        </header>
         {coverageDetail ? <div className="analysis-coverage-detail">{coverageDetail}</div> : null}
 
-        <div className={`insights-canvas ${selectedStock ? "has-stock-selection" : ""}`}>
+        <div className={`insights-canvas ${selectedStock ? "has-stock-selection" : ""} ${wordCloudCollapsed ? "is-word-cloud-collapsed" : ""} ${rightPanelsCollapsed ? "is-related-news-collapsed" : ""} ${selectedStock && rightPanelsCollapsed ? "is-daily-chart-collapsed" : ""}`}>
           <StockNetwork
             nodes={filteredNodes}
             links={filteredLinks}
             emptyMessage={graphEmptyMessage}
             highlightedNodeId={highlightedNodeId}
             onClearSelection={clearSelection}
-            onPreview={previewStock}
-            onTogglePreview={previewStock}
-            onPreviewEnd={preserveSelection}
+            onPreview={previewNetworkNode}
+            onTogglePreview={previewNetworkNode}
+            onPreviewEnd={endPanelPreview}
           />
 
-          <section className="insight-overlay word-cloud-panel" aria-labelledby="word-cloud-title">
+          <section id="word-cloud-panel" className={`insight-overlay word-cloud-panel ${wordCloudCollapsed ? "is-collapsed" : ""}`} aria-labelledby="word-cloud-title" aria-hidden={wordCloudCollapsed || undefined}>
             <header>
               <div className="insight-panel-title"><ScanSearch size={15} /><div><span>热点扫描</span><h2 id="word-cloud-title">主题词云</h2></div></div>
-              <strong>{active ? `${active.eventCount} 个事件` : "--"}</strong>
+              <div className="insight-panel-actions">
+                <strong>{active ? `${active.eventCount} 个事件` : "--"}</strong>
+                <button id="word-cloud-collapse" type="button" className="insight-panel-collapse" onClick={() => setPanelCollapsed(setWordCloudCollapsed, true, "word-cloud-expand")} aria-controls="word-cloud-panel" aria-expanded="true" title="折叠主题词云" aria-label="折叠主题词云"><PanelLeftClose size={15} /></button>
+              </div>
             </header>
             <HotspotRadar
               words={active?.words || []}
@@ -313,7 +376,7 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
               selected={selectedWord?.text || null}
               onPreview={(word) => previewWord(word)}
               onTogglePreview={(word) => previewWord(word)}
-              onPreviewEnd={preserveSelection}
+              onPreviewEnd={endPanelPreview}
             />
             <footer>
               {selectedWord ? (
@@ -337,21 +400,88 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
             </footer>
           </section>
 
-          <RelatedNewsPanel selection={relatedSelection} from={active?.from || null} to={active?.to || null} />
-          {selectedStock ? <StockDailyChart node={selectedStock} /> : null}
+          <RelatedNewsPanel
+            selection={relatedSelection}
+            from={active?.from || null}
+            to={active?.to || null}
+            collapsed={rightPanelsCollapsed && !rightPanelsPeeking}
+            peeking={rightPanelsCollapsed && rightPanelsPeeking}
+            onCollapse={() => {
+              clearAutoPeek();
+              setPanelCollapsed(setRightPanelsCollapsed, true, "related-news-expand");
+            }}
+          />
+          {selectedStock ? (
+            <StockDailyChart
+              node={selectedStock}
+              collapsed={rightPanelsCollapsed && !rightPanelsPeeking}
+              peeking={rightPanelsCollapsed && rightPanelsPeeking}
+              onCollapse={() => {
+                clearAutoPeek();
+                setPanelCollapsed(setRightPanelsCollapsed, true, "daily-chart-expand");
+              }}
+            />
+          ) : null}
+
+          <button
+            type="button"
+            id="word-cloud-expand"
+            className={`insight-edge-trigger is-left is-word-cloud ${wordCloudCollapsed ? "is-visible" : ""}`}
+            onClick={() => setPanelCollapsed(setWordCloudCollapsed, false, "word-cloud-collapse")}
+            aria-controls="word-cloud-panel"
+            aria-expanded={!wordCloudCollapsed}
+            aria-label="展开主题词云"
+            title="展开主题词云"
+            tabIndex={wordCloudCollapsed ? 0 : -1}
+          >
+            <PanelLeftOpen size={16} />
+            <span>词云</span>
+          </button>
+          <button
+            type="button"
+            id="related-news-expand"
+            className={`insight-edge-trigger is-right is-related-news ${rightPanelsCollapsed && !rightPanelsPeeking ? "is-visible" : ""}`}
+            onClick={() => {
+              clearAutoPeek();
+              setPanelCollapsed(setRightPanelsCollapsed, false, "related-news-collapse");
+            }}
+            aria-controls="related-news-shell"
+            aria-expanded={!rightPanelsCollapsed || rightPanelsPeeking}
+            aria-label="展开相关新闻"
+            title="展开相关新闻"
+            tabIndex={rightPanelsCollapsed && !rightPanelsPeeking ? 0 : -1}
+          >
+            <PanelRightOpen size={16} />
+            <span>快讯</span>
+          </button>
+          {selectedStock ? (
+            <button
+              type="button"
+              id="daily-chart-expand"
+              className={`insight-edge-trigger is-right is-daily-chart ${rightPanelsCollapsed && !rightPanelsPeeking ? "is-visible" : ""}`}
+              onClick={() => {
+                clearAutoPeek();
+                setPanelCollapsed(setRightPanelsCollapsed, false, "daily-chart-collapse");
+              }}
+              aria-controls="stock-daily-shell"
+              aria-expanded={!rightPanelsCollapsed || rightPanelsPeeking}
+              aria-label="展开日 K 线图"
+              title="展开日 K 线图"
+              tabIndex={rightPanelsCollapsed && !rightPanelsPeeking ? 0 : -1}
+            >
+              <PanelRightOpen size={16} />
+              <span>日 K</span>
+            </button>
+          ) : null}
 
           <div className="canvas-network-meta">
             <div className="network-edge-legend" aria-label="关系类型图例">
               {relationshipTypes.map((type) => <span key={type}><i className={`is-${type}`} />{relationshipLabels[type]}</span>)}
             </div>
-            <div className="canvas-network-counts">
-              <span>股票 {filteredNodes.filter((node) => node.type === "stock").length}</span>
-              <span>主题 {filteredNodes.filter((node) => node.type === "topic").length}</span>
-              <span>高置信 {filteredLinks.filter((link) => link.confidence === "high").length}</span>
-            </div>
           </div>
         </div>
       </div>
-    </section>
+      </section>
+    </>
   );
 }
