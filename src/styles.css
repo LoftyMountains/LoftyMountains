@@ -1426,23 +1426,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .insights-dashboard { height: auto; min-height: calc(100dvh - 101px); display: block; overflow: visible; }
   .insights-dashboard > .analysis-error { position: static; }
   .insights-workbench { overflow: visible; }
-  .insights-canvas { height: 748px; min-height: 748px; flex: none; overflow: hidden; }
-  .insights-canvas.has-stock-selection { height: 1068px; min-height: 1068px; }
-  .insights-canvas > .stock-network { inset: 0 0 auto; height: 420px; min-height: 420px; flex-basis: auto; }
-  .insights-canvas.is-word-cloud-collapsed > .stock-network,
+  .insights-canvas { height: 1080px; min-height: 1080px; flex: none; overflow: hidden; }
+  .insights-canvas.has-stock-selection { height: 1398px; min-height: 1398px; }
+  .insights-canvas > .stock-network { inset: 310px 0 auto; height: 390px; min-height: 390px; flex-basis: auto; }
+  .insights-canvas.is-word-cloud-collapsed > .stock-network { inset: 14px 0 auto; height: 560px; min-height: 560px; }
   .insights-canvas.is-related-news-collapsed > .stock-network,
-  .insights-canvas.is-daily-chart-collapsed > .stock-network { height: 100%; }
+  .insights-canvas.is-daily-chart-collapsed > .stock-network { height: 650px; min-height: 650px; }
   .insights-canvas.is-word-cloud-collapsed .network-svg,
   .insights-canvas.is-word-cloud-collapsed.is-related-news-collapsed .network-svg { transform: none; }
   .insights-canvas.is-word-cloud-collapsed .network-controls { right: 14px; left: auto; }
-  .word-cloud-panel { top: 14px; bottom: auto; left: 14px; width: min(270px, calc(100% - 150px)); height: 300px; }
+  .word-cloud-panel { top: 14px; bottom: auto; left: 14px; width: calc(100% - 28px); height: 280px; }
   .insight-edge-trigger.is-word-cloud { top: 20px; }
   .word-cloud-panel .word-cloud { min-height: 0; flex-basis: auto; }
   .hotspot-ranking ol { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .hotspot-ranking li:nth-child(n+4) { display: none; }
-  .insights-canvas .network-controls { top: 14px; right: 14px; left: auto; }
+  .insights-canvas .network-controls { top: 324px; right: 14px; left: auto; }
   .insights-canvas .network-selection {
-    top: 324px;
+    top: 662px;
     right: 14px;
     bottom: auto;
     left: 14px;
@@ -1464,17 +1464,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .insights-canvas .market-validation-metrics,
   .insights-canvas .market-validation small,
   .insights-canvas .network-selection-context { display: none; }
-  .canvas-network-meta { top: 374px; right: 14px; bottom: auto; left: 14px; width: auto; max-width: none; transform: none; }
+  .canvas-network-meta { top: 718px; right: 14px; bottom: auto; left: 14px; width: auto; max-width: none; transform: none; }
   .canvas-network-meta .network-edge-legend { overflow-x: auto; scrollbar-width: none; }
-  .insight-news-panel { top: 434px; right: 14px; left: 14px; width: auto; height: 300px; }
-  .stock-daily-panel { top: 748px; right: 14px; bottom: auto; left: 14px; width: auto; height: 306px; }
-  .insight-edge-trigger.is-related-news { top: 440px; }
-  .insight-edge-trigger.is-daily-chart { top: 754px; bottom: auto; }
+  .insight-news-panel { top: 760px; right: 14px; left: 14px; width: auto; height: 300px; }
+  .stock-daily-panel { top: 1074px; right: 14px; bottom: auto; left: 14px; width: auto; height: 306px; }
+  .insight-edge-trigger.is-related-news { top: 766px; }
+  .insight-edge-trigger.is-daily-chart { top: 1080px; bottom: auto; }
+  .insights-canvas.is-word-cloud-collapsed .network-controls { top: 28px; }
+  .insights-canvas.is-word-cloud-collapsed .network-selection { top: 610px; }
+  .insights-canvas.is-word-cloud-collapsed .canvas-network-meta { top: 676px; }
+  .insights-canvas.is-word-cloud-collapsed .insight-news-panel { top: 718px; }
+  .insights-canvas.is-word-cloud-collapsed .insight-edge-trigger.is-related-news { top: 724px; }
+  .network-label { font-size: 8px; stroke-width: 3px; }
   .insight-news-panel .related-news-item h3 { font-size: 11px; }
 }
 
 @media (max-width: 520px) {
-  .word-cloud-panel { width: calc(100% - 148px); min-width: 185px; height: 300px; }
+  .word-cloud-panel { width: calc(100% - 28px); min-width: 0; height: 280px; }
   .word-cloud-panel > footer .direction-legend { display: none; }
   .word-cloud-panel > footer > span:nth-child(n+3) { display: none; }
   .canvas-network-meta .network-edge-legend { gap: 5px 9px; }
