@@ -4,6 +4,7 @@ export const relationshipLabels: Record<AnalysisLink["type"], string> = {
   "news-cooccurrence": "新闻共现",
   "stock-cooccurrence": "股票共现",
   "company-industry": "公司行业",
+  "theme-membership": "主题关联",
   "policy-impact": "政策影响",
   "supply-chain": "供应链事件",
 };

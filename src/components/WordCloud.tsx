@@ -48,8 +48,8 @@ export function WordCloud({ words, selected, onPreview, onTogglePreview, onPrevi
     const visible = words.slice(0, capacity);
     const min = Math.min(...visible.map((word) => word.score));
     const max = Math.max(...visible.map((word) => word.score));
-    const lower = size.width < 480 ? 12 : 13;
-    const upper = size.width < 480 ? 34 : 46;
+    const lower = size.width < 480 ? 14 : 15;
+    const upper = size.width < 480 ? 40 : 52;
     const scale = (score: number) => {
       if (min === max) return (lower + upper) / 2;
       return lower + (Math.sqrt(score) - Math.sqrt(min)) / (Math.sqrt(max) - Math.sqrt(min)) * (upper - lower);

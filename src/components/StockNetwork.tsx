@@ -219,7 +219,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
     svg.attr("viewBox", `0 0 ${size.width} ${size.height}`);
     svg.attr("data-layout-state", "settling");
     svg.append("title").text("快讯主题与关联股票网络");
-    svg.append("desc").text("方形节点表示股票，圆形节点表示新闻主题；关系线区分新闻共现、股票共现、公司行业、政策影响和供应链事件。 ");
+    svg.append("desc").text("方形节点表示股票，圆形节点表示新闻主题；关系线区分新闻共现、股票共现、公司行业、主题关联、政策影响和供应链事件。 ");
     const root = svg.append("g");
     const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
     const zoom = d3.zoom<SVGSVGElement, unknown>()

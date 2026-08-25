@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, PanelLeftClose, PanelLeftOpen, PanelRightOpen, RefreshCw, ScanSearch, Share2 } from "lucide-react";
+import { ChevronDown, Network as NetworkIcon, PanelLeftClose, PanelLeftOpen, PanelRightOpen, RefreshCw, ScanSearch, Share2, TrendingUp } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { AnalysisLink, AnalysisNode, AnalysisPayload, AnalysisRelationshipType, AnalysisWindow, AnalysisWord } from "../../shared/types";
 import { apiUrl } from "../lib/api";
@@ -10,6 +10,7 @@ import { prefetchRelatedNews, RelatedNewsPanel, type RelatedNewsSelection, type 
 import { StockDailyChart } from "./StockDailyChart";
 import { StockNetwork } from "./StockNetwork";
 import { HotspotRadar } from "./HotspotRadar";
+import { IndustryLeadersPanel } from "./IndustryLeadersPanel";
 
 const analysisWindows = [
   { hours: 1, label: "近 1 小时" },
@@ -31,6 +32,7 @@ const relationshipTypes = [
   "news-cooccurrence",
   "stock-cooccurrence",
   "company-industry",
+  "theme-membership",
   "policy-impact",
   "supply-chain",
 ] as const;
@@ -38,6 +40,7 @@ const relationshipTypes = [
 type RelationshipTypeFilter = AnalysisRelationshipType | "all";
 type ConfidenceFilter = AnalysisLink["confidence"];
 type DensityMode = "overview" | "analysis" | "research";
+type InsightsView = "relationships" | "leaders";
 
 function coverageLabel(coverageRatio: number | null, complete: boolean | null) {
   if (coverageRatio === null || complete === null) return "覆盖率未知";
@@ -63,7 +66,11 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
   const [minimumConfidence, setMinimumConfidence] = useState<ConfidenceFilter>("medium");
   const [minimumEvents, setMinimumEvents] = useState(3);
   const [densityMode, setDensityMode] = useState<DensityMode>("overview");
-  const [wordCloudCollapsed, setWordCloudCollapsed] = useState(false);
+  const [insightsView, setInsightsView] = useState<InsightsView>("relationships");
+  const [leadersRevision, setLeadersRevision] = useState(0);
+  const [wordCloudCollapsed, setWordCloudCollapsed] = useState(() => (
+    typeof window !== "undefined" && window.matchMedia("(max-width: 840px)").matches
+  ));
   const [rightPanelsCollapsed, setRightPanelsCollapsed] = useState(false);
   const [rightPanelsPeeking, setRightPanelsPeeking] = useState(false);
   const [touchbarHost, setTouchbarHost] = useState<HTMLElement | null>(null);
@@ -293,8 +300,12 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
   return (
     <>
       {touchbarHost ? createPortal(
-        <div className={`insights-touchbar density-${densityMode}`} aria-label="热点与股票关联控制">
-          <div className="touchbar-title"><Share2 size={14} /><span>关联控制</span></div>
+        <div className={`insights-touchbar density-${densityMode} view-${insightsView}`} aria-label="市场洞察控制">
+          <div className="touchbar-title">{insightsView === "relationships" ? <Share2 size={14} /> : <TrendingUp size={14} />}<span>{insightsView === "relationships" ? "关联控制" : "子行业领航"}</span></div>
+          <div className="touchbar-view-switch" role="group" aria-label="市场洞察视图">
+            <button type="button" className={insightsView === "relationships" ? "is-active" : ""} aria-pressed={insightsView === "relationships"} onClick={() => setInsightsView("relationships")} title="热点关联视图"><NetworkIcon size={13} /><span>关联</span></button>
+            <button type="button" className={insightsView === "leaders" ? "is-active" : ""} aria-pressed={insightsView === "leaders"} onClick={() => setInsightsView("leaders")} title="子行业领航股视图"><TrendingUp size={13} /><span>行业</span></button>
+          </div>
           <div className="touchbar-periods" role="tablist" aria-label="统计时间窗口">
             <span>周期</span>
             <div>
@@ -321,6 +332,7 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
               })}
             </div>
           </div>
+          {insightsView === "relationships" ? <>
           <label className="touchbar-control is-relationship">
             <span>关系</span>
             <select value={relationshipType} onChange={(event) => setRelationshipType(event.target.value as RelationshipTypeFilter)} aria-label="关系类型">
@@ -366,6 +378,7 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
           <output className="touchbar-result" title={`显示 ${filteredLinks.length} 条，共 ${graphLinks.length} 条关系`}>
             <i />{filteredLinks.length}/{graphLinks.length}
           </output>
+          </> : null}
         </div>,
         touchbarHost,
       ) : null}
@@ -373,19 +386,29 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
       <header className="insights-heading">
         <div>
           <span className="eyebrow">MARKET INTELLIGENCE</span>
-          <h1 id="market-insights-title">热点与股票关联</h1>
+          <h1 id="market-insights-title">{insightsView === "relationships" ? "热点与股票关联" : "子行业领航股"}</h1>
         </div>
         <div className="insights-heading-meta">
+          <div className="insights-view-switch" role="group" aria-label="市场洞察视图">
+            <button type="button" className={insightsView === "relationships" ? "is-active" : ""} aria-pressed={insightsView === "relationships"} onClick={() => setInsightsView("relationships")}><NetworkIcon size={14} /><span>关联图</span></button>
+            <button type="button" className={insightsView === "leaders" ? "is-active" : ""} aria-pressed={insightsView === "leaders"} onClick={() => setInsightsView("leaders")}><TrendingUp size={14} /><span>子行业</span></button>
+          </div>
           <div className="insights-times">
             {payload ? <span title={formatFull(payload.generatedAt)}>分析更新于 {formatClock(payload.generatedAt)}</span> : null}
             {dataThrough ? <span title={formatFull(dataThrough)}>数据截至 {formatClock(dataThrough)}</span> : <span>数据截至 --</span>}
           </div>
-          <button className={`icon-button ${loading ? "is-spinning" : ""}`} onClick={() => void load(true)} title="刷新分析" aria-label="刷新分析"><RefreshCw size={17} /></button>
+          <button
+            className={`icon-button ${insightsView === "relationships" && loading ? "is-spinning" : ""}`}
+            onClick={() => insightsView === "relationships" ? void load(true) : setLeadersRevision((current) => current + 1)}
+            title={insightsView === "relationships" ? "刷新分析" : "刷新主题行情"}
+            aria-label={insightsView === "relationships" ? "刷新分析" : "刷新主题行情"}
+          ><RefreshCw size={17} /></button>
         </div>
       </header>
 
-      {error ? <div className="analysis-error">{error}</div> : null}
-      <div className="insights-workbench">
+      {error && insightsView === "relationships" ? <div className="analysis-error">{error}</div> : null}
+      <div className={`insights-workbench view-${insightsView}`}>
+        {insightsView === "leaders" ? <IndustryLeadersPanel hours={selectedHours} revision={leadersRevision} /> : <>
         {coverageDetail ? <div className="analysis-coverage-detail">{coverageDetail}</div> : null}
 
         <div className={`insights-canvas ${selectedStock ? "has-stock-selection" : ""} ${wordCloudCollapsed ? "is-word-cloud-collapsed" : ""} ${rightPanelsCollapsed ? "is-related-news-collapsed" : ""} ${selectedStock && rightPanelsCollapsed ? "is-daily-chart-collapsed" : ""}`}>
@@ -518,6 +541,7 @@ export function InsightsDashboard({ revision, compact = false }: { revision: str
             </div>
           </div>
         </div>
+        </>}
       </div>
       </section>
     </>

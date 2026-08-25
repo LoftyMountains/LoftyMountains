@@ -147,6 +147,10 @@ export function App() {
   useEffect(() => {
     const handleWheel = (event: WheelEvent) => {
       const boundary = workspaceView === "live" ? livePageRef.current : insightsPageRef.current;
+      if (event.target instanceof Element && event.target.closest('[data-wheel-control="true"]')) {
+        workspaceWheelGesture.current = { delta: 0, direction: 0, lastAt: performance.now() };
+        return;
+      }
       const direction = Math.sign(event.deltaY);
       const acceptsDirection = workspaceView === "live"
         ? direction > 0

@@ -91,7 +91,7 @@ export interface AnalysisNode {
   marketReaction?: AnalysisMarketReaction;
 }
 
-export type AnalysisRelationshipType = "news-cooccurrence" | "stock-cooccurrence" | "company-industry" | "policy-impact" | "supply-chain";
+export type AnalysisRelationshipType = "news-cooccurrence" | "stock-cooccurrence" | "company-industry" | "theme-membership" | "policy-impact" | "supply-chain";
 
 export interface AnalysisLinkEvidence {
   eventId: string;
@@ -160,6 +160,80 @@ export interface AnalysisPayload {
     responseBytes: number;
     reusedWindows: number;
   };
+}
+
+export type IndustryLeaderMarket = "cn" | "hk" | "us";
+
+export interface IndustryLeaderQuote {
+  status: "available" | "unavailable";
+  tradingState: "trading" | "closed" | "unknown";
+  realtime: boolean;
+  price: number | null;
+  previousClose: number | null;
+  changePercent: number | null;
+  marketCap: number | null;
+  currency: "CNY" | "HKD" | "USD" | null;
+  marketCapCurrency: "CNY" | "HKD" | "USD" | null;
+  provider: string;
+  updatedAt: string;
+  reason?: string | null;
+}
+
+export interface IndustryLeaderLiveQuotesPayload {
+  generatedAt: string;
+  pollAfterMs: number;
+  quotes: Record<string, IndustryLeaderQuote>;
+}
+
+export interface IndustryLeaderStock {
+  symbol: string;
+  name: string;
+  market: IndustryLeaderMarket;
+  exchange: "A股" | "港股" | "NASDAQ" | "NYSE" | "AMEX" | "美股";
+  mentions: number;
+  business: string;
+  businessSource: "curated-product-catalog" | "standard-sub-industry";
+  quote: IndustryLeaderQuote;
+}
+
+export interface IndustryCatalogEntry {
+  id: string;
+  label: string;
+  taxonomy: "跨市场标准子行业";
+  sectorId: string;
+  sectorLabel: string;
+  eventCount: number;
+  marketCount: number;
+  stockCount: number;
+}
+
+export interface MarketUniverseCoverage {
+  source: string;
+  refreshedAt: string;
+  stale: boolean;
+  fallback: boolean;
+  listedCount: Record<IndustryLeaderMarket | "total", number>;
+  eligibleCount: Record<IndustryLeaderMarket | "total", number>;
+  criteria: {
+    primaryListingOnly: true;
+    activeOnly: true;
+    commonStockOnly: true;
+    liquidityWindow: "30d-average-traded-value";
+    minMarketCapUsd: Record<IndustryLeaderMarket, number>;
+    minTradedValueUsd: Record<IndustryLeaderMarket, number>;
+  };
+}
+
+export interface IndustryLeadersPayload {
+  generatedAt: string;
+  from: string;
+  to: string;
+  selectedSubIndustry: string | null;
+  selectedSubIndustryLabel: string | null;
+  catalog: IndustryCatalogEntry[];
+  leaders: Record<IndustryLeaderMarket, IndustryLeaderStock[]>;
+  provider: string;
+  universe: MarketUniverseCoverage;
 }
 
 export interface MarketPoint {
