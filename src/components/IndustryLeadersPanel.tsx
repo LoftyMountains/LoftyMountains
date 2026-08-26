@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, CircleAlert, DatabaseZap, LoaderCircle, Search, TrendingUp } from "lucide-react";
+import { ChevronDown, ChevronUp, CircleAlert, DatabaseZap, LoaderCircle, PanelTopClose, PanelTopOpen, Search, TrendingUp } from "lucide-react";
 import type { IndustryCatalogEntry, IndustryLeaderLiveQuotesPayload, IndustryLeaderStock, IndustryLeadersPayload } from "../../shared/types";
 import { apiUrl } from "../lib/api";
 import { formatClock, formatFull } from "../lib/time";
 
 const payloadCache = new Map<string, { payload: IndustryLeadersPayload; etag: string | null; fetchedAt: number }>();
 const cacheMs = 60_000;
-const businessSourceLabels: Record<IndustryLeaderStock["businessSource"], string> = {
-  "curated-product-catalog": "公开公司资料，经景行产品词表规范化",
-  "standard-sub-industry": "TradingView 标准子行业归纳",
-};
+const catalogCollapsedStorageKey = "jingxing.industry-catalog-collapsed-v2";
 
 function signedPercent(value: number | null) {
   if (value === null) return "--";
@@ -51,7 +48,7 @@ function LeaderRow({ stock, rank }: { stock: IndustryLeaderStock; rank: number }
       <span className="industry-leader-rank">{String(rank).padStart(2, "0")}</span>
       <div className="industry-leader-identity">
         <div><strong>{stock.name}</strong><span>{stock.symbol}</span></div>
-        <div className="industry-leader-business" title={`${stock.business} · 来源：${businessSourceLabels[stock.businessSource]}`}><span>产品</span>{stock.business}</div>
+        <div className="industry-leader-business" title={stock.business}><span>产品</span>{stock.business}</div>
         <div className="industry-leader-meta">
           <b>{stock.exchange}</b>
           <span>市值 {compactMoney(stock.quote.marketCap, stock.quote.marketCapCurrency)}</span>
@@ -82,6 +79,11 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [bridgeMotion, setBridgeMotion] = useState<"next" | "previous" | null>(null);
+  const [catalogCollapsed, setCatalogCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const stored = window.localStorage.getItem(catalogCollapsedStorageKey);
+    return stored === null ? true : stored === "true";
+  });
   const requestSequence = useRef(0);
   const bridgeRef = useRef<HTMLDivElement>(null);
   const wheelAccumulator = useRef(0);
@@ -282,51 +284,75 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
     if (bridgeMotionTimer.current !== null) window.clearTimeout(bridgeMotionTimer.current);
   }, []);
 
+  useEffect(() => {
+    window.localStorage.setItem(catalogCollapsedStorageKey, String(catalogCollapsed));
+  }, [catalogCollapsed]);
+
   return (
     <section className="industry-leaders-panel" aria-labelledby="industry-leaders-catalog-title">
-      <div className="industry-catalog">
+      <div className={`industry-catalog ${catalogCollapsed ? "is-collapsed" : ""}`}>
         <div className="industry-catalog-heading">
           <div>
             <span className="eyebrow">CROSS-MARKET INDUSTRY DIRECTORY</span>
             <h2 id="industry-leaders-catalog-title">标准子行业目录</h2>
-            <small>{universe
-              ? `完整名录 ${universe.listedCount.total.toLocaleString("zh-CN")} 只 · 合格入池 ${universe.eligibleCount.total.toLocaleString("zh-CN")} 只 · ${payload?.catalog.length || 0} 个子行业`
+            <small>{catalogCollapsed && activeEntry
+              ? `${activeEntry.sectorLabel} · ${activeEntry.label} · ${activeEntry.stockCount} 只候选股`
+              : universe
+                ? `完整名录 ${universe.listedCount.total.toLocaleString("zh-CN")} 只 · 合格入池 ${universe.eligibleCount.total.toLocaleString("zh-CN")} 只 · ${payload?.catalog.length || 0} 个子行业`
               : "正在同步三地证券名录"}</small>
           </div>
-          <label className="industry-catalog-search">
-            <Search size={15} aria-hidden="true" />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} type="search" placeholder="搜索子行业或一级行业" aria-label="搜索子行业或一级行业" />
-          </label>
-        </div>
-        <div className="industry-taxonomy-note"><span>统一分类</span><strong>跨市场标准子行业</strong><small>TradingView 公共市场扫描</small></div>
-        {universe ? <div className={`industry-universe-summary ${universe.stale || universe.fallback ? "has-warning" : ""}`}>
-          {(["cn", "hk", "us"] as const).map((market) => <div key={market}>
-            <span>{market === "cn" ? "A 股" : market === "hk" ? "港股" : "美股"}</span>
-            <strong>{universe.eligibleCount[market].toLocaleString("zh-CN")}</strong>
-            <small>/ {universe.listedCount[market].toLocaleString("zh-CN")} 名录</small>
-          </div>)}
-          <p>{universe.fallback ? "当前使用基础池" : universe.stale ? "刷新失败，沿用上一快照" : "名录运行正常"}</p>
-        </div> : null}
-        <div className="industry-category-filter" role="tablist" aria-label="一级行业筛选">
-          {sectors.map((value) => (
-            <button type="button" role="tab" aria-selected={sector === value} className={sector === value ? "is-active" : ""} onClick={() => setSector(value)} key={value}>{value}</button>
-          ))}
-        </div>
-        <div className="industry-catalog-list" aria-label="子行业选择">
-          {matchingCatalog.map((entry) => (
+          <div className="industry-catalog-actions">
+            <label className="industry-catalog-search">
+              <Search size={15} aria-hidden="true" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} type="search" placeholder="搜索子行业或一级行业" aria-label="搜索子行业或一级行业" tabIndex={catalogCollapsed ? -1 : 0} />
+            </label>
             <button
               type="button"
-              className={entry.id === activeSubIndustry ? "is-active" : ""}
-              aria-pressed={entry.id === activeSubIndustry}
-              onClick={() => selectSubIndustry(entry)}
-              title={`${entry.sectorLabel} · ${entry.taxonomy} · ${entry.eventCount} 个近期事件 · ${entry.stockCount} 只候选股`}
-              key={entry.id}
+              className="industry-catalog-collapse"
+              onClick={() => setCatalogCollapsed((current) => !current)}
+              aria-controls="industry-catalog-content"
+              aria-expanded={!catalogCollapsed}
+              aria-label={catalogCollapsed ? "展开子行业选择" : "折叠子行业选择"}
+              title={catalogCollapsed ? "展开子行业选择" : "折叠子行业选择"}
             >
-              <span>{entry.label}</span>
-              {entry.eventCount > 0 ? <b>{entry.eventCount}</b> : null}
+              {catalogCollapsed ? <PanelTopOpen size={16} /> : <PanelTopClose size={16} />}
             </button>
-          ))}
-          {!matchingCatalog.length ? <span className="industry-catalog-empty">没有匹配的子行业</span> : null}
+          </div>
+        </div>
+        <div id="industry-catalog-content" className="industry-catalog-content" aria-hidden={catalogCollapsed || undefined}>
+          <div className="industry-catalog-content-inner">
+            <div className="industry-taxonomy-note"><span>统一分类</span><strong>跨市场标准子行业</strong><small>TradingView 公共市场扫描</small></div>
+            {universe ? <div className={`industry-universe-summary ${universe.stale || universe.fallback ? "has-warning" : ""}`}>
+              {(["cn", "hk", "us"] as const).map((market) => <div key={market}>
+                <span>{market === "cn" ? "A 股" : market === "hk" ? "港股" : "美股"}</span>
+                <strong>{universe.eligibleCount[market].toLocaleString("zh-CN")}</strong>
+                <small>/ {universe.listedCount[market].toLocaleString("zh-CN")} 名录</small>
+              </div>)}
+              <p>{universe.fallback ? "当前使用基础池" : universe.stale ? "刷新失败，沿用上一快照" : "名录运行正常"}</p>
+            </div> : null}
+            <div className="industry-category-filter" role="tablist" aria-label="一级行业筛选">
+              {sectors.map((value) => (
+                <button type="button" role="tab" tabIndex={catalogCollapsed ? -1 : 0} aria-selected={sector === value} className={sector === value ? "is-active" : ""} onClick={() => setSector(value)} key={value}>{value}</button>
+              ))}
+            </div>
+            <div className="industry-catalog-list" aria-label="子行业选择">
+              {matchingCatalog.map((entry) => (
+                <button
+                  type="button"
+                  tabIndex={catalogCollapsed ? -1 : 0}
+                  className={entry.id === activeSubIndustry ? "is-active" : ""}
+                  aria-pressed={entry.id === activeSubIndustry}
+                  onClick={() => selectSubIndustry(entry)}
+                  title={`${entry.sectorLabel} · ${entry.taxonomy} · ${entry.eventCount} 个近期事件 · ${entry.stockCount} 只候选股`}
+                  key={entry.id}
+                >
+                  <span>{entry.label}</span>
+                  {entry.eventCount > 0 ? <b>{entry.eventCount}</b> : null}
+                </button>
+              ))}
+              {!matchingCatalog.length ? <span className="industry-catalog-empty">没有匹配的子行业</span> : null}
+            </div>
+          </div>
         </div>
       </div>
 

@@ -192,7 +192,7 @@ export interface IndustryLeaderStock {
   exchange: "A股" | "港股" | "NASDAQ" | "NYSE" | "AMEX" | "美股";
   mentions: number;
   business: string;
-  businessSource: "curated-product-catalog" | "standard-sub-industry";
+  businessSource: "curated-product-catalog" | "public-product-segments" | "public-company-profile" | "standard-sub-industry";
   quote: IndustryLeaderQuote;
 }
 

@@ -1067,13 +1067,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .insights-workbench > .analysis-coverage-detail { min-height: 25px; padding-block: 3px; }
 .insights-workbench.view-leaders { overflow-y: auto; overflow-x: hidden; scrollbar-color: var(--line-strong) transparent; }
 .industry-leaders-panel { width: min(1320px, 100%); margin: 0 auto; padding: 22px 24px 28px; color: var(--text); }
-.industry-catalog { border-bottom: 1px solid var(--line); padding-bottom: 16px; }
-.industry-catalog-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.industry-catalog { border-bottom: 1px solid var(--line); padding-bottom: 16px; transition: padding .34s cubic-bezier(.22, .72, .18, 1); }
+.industry-catalog.is-collapsed { padding-bottom: 10px; }
+.industry-catalog-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; transition: min-height .34s cubic-bezier(.22, .72, .18, 1); }
+.industry-catalog-heading > div:first-child { min-width: 0; }
 .industry-catalog-heading h2 { margin: 4px 0 2px; font-size: 22px; line-height: 1.15; }
-.industry-catalog-heading small { color: var(--muted); font-size: 10px; }
+.industry-catalog-heading small { display: block; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.industry-catalog-actions { flex: 0 1 auto; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .industry-catalog-search { width: min(280px, 42%); min-height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--input); color: var(--muted); }
+.industry-catalog-actions .industry-catalog-search { width: 280px; transition: width .28s cubic-bezier(.22, .72, .18, 1), padding .28s ease, border-color .2s ease, opacity .2s ease; }
 .industry-catalog-search:focus-within { border-color: var(--gold); box-shadow: 0 0 0 3px var(--focus-ring); }
 .industry-catalog-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 11px; }
+.industry-catalog-collapse { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 34px; padding: 0; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--muted); cursor: pointer; transition: border-color .18s ease, background .18s ease, color .18s ease, transform .18s ease; }
+.industry-catalog-collapse:hover { border-color: color-mix(in srgb, var(--gold), transparent 38%); background: color-mix(in srgb, var(--gold), transparent 90%); color: var(--gold); transform: translateY(-1px); }
+.industry-catalog-collapse:active { transform: scale(.96); }
+.industry-catalog-collapse:focus-visible { outline: 0; box-shadow: 0 0 0 3px var(--focus-ring); }
+.industry-catalog-content { display: grid; grid-template-rows: 1fr; opacity: 1; transform: translateY(0); transition: grid-template-rows .34s cubic-bezier(.22, .72, .18, 1), opacity .22s ease, transform .34s cubic-bezier(.22, .72, .18, 1); }
+.industry-catalog-content-inner { min-height: 0; overflow: hidden; }
+.industry-catalog.is-collapsed .industry-catalog-content { grid-template-rows: 0fr; opacity: 0; pointer-events: none; transform: translateY(-7px); }
+.industry-catalog.is-collapsed .industry-catalog-heading { min-height: 36px; align-items: center; }
+.industry-catalog.is-collapsed .industry-catalog-heading .eyebrow { display: none; }
+.industry-catalog.is-collapsed .industry-catalog-heading > div:first-child { display: flex; align-items: baseline; gap: 10px; overflow: hidden; }
+.industry-catalog.is-collapsed .industry-catalog-heading h2 { flex: 0 0 auto; margin: 0; font-size: 15px; }
+.industry-catalog.is-collapsed .industry-catalog-heading small { min-width: 0; font-size: 9px; }
+.industry-catalog.is-collapsed .industry-catalog-search { width: 0; min-height: 34px; padding-inline: 0; overflow: hidden; border-color: transparent; opacity: 0; pointer-events: none; }
 .industry-category-filter { display: flex; gap: 5px; margin-top: 16px; overflow-x: auto; scrollbar-width: none; }
 .industry-category-filter::-webkit-scrollbar, .industry-catalog-list::-webkit-scrollbar { display: none; }
 .industry-category-filter button { flex: 0 0 auto; min-height: 27px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; }
@@ -1769,8 +1786,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .network-label { font-size: 11px; stroke-width: 3px; }
   .insight-news-panel .related-news-item h3 { font-size: 12px; }
   .industry-leaders-panel { padding: 17px 14px 24px; }
-  .industry-catalog-heading { display: block; }
-  .industry-catalog-search { width: 100%; margin-top: 12px; }
+  .industry-catalog-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+  .industry-catalog-actions { grid-column: 1 / -1; width: 100%; margin-top: 12px; }
+  .industry-catalog-actions .industry-catalog-search { width: auto; flex: 1 1 auto; }
+  .industry-catalog.is-collapsed .industry-catalog-heading { display: flex; }
+  .industry-catalog.is-collapsed .industry-catalog-actions { width: auto; margin-top: 0; }
   .industry-universe-summary { gap: 10px; overflow-x: auto; scrollbar-width: none; }
   .industry-universe-summary > div { min-width: 82px; }
   .industry-universe-summary p { min-width: max-content; }
@@ -1793,6 +1813,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .stock-daily-panel { height: 306px; }
   .touchbar-view-switch button span { display: none; }
   .industry-catalog-heading h2 { font-size: 19px; }
+  .industry-catalog.is-collapsed .industry-catalog-heading > div:first-child { display: grid; gap: 1px; }
+  .industry-catalog.is-collapsed .industry-catalog-heading h2 { font-size: 14px; }
   .industry-leader-status { display: block; padding: 10px 0; }
   .industry-leader-status > span { display: flex; margin-top: 5px; }
   .industry-leader-status strong { font-size: 14px; }
