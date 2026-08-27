@@ -1,27 +1,147 @@
-import { useState } from "react";
-import { ArrowUpRight, CalendarSearch, CircleAlert, ListFilter, Radio, RotateCcw, Search, X } from "lucide-react";
-import type { NewsItem, SourceId, SourceStatus } from "../../shared/types";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { ArrowUpRight, CalendarSearch, ChevronDown, CircleAlert, Info, ListFilter, Radio, RotateCcw, Search, X } from "lucide-react";
+import type { FeedNewsItem, SourceId, SourceStatus } from "../../shared/types";
+import { newsLinkAccess, shouldShowNewsContent, stableEventDomToken, type NewsEventGroup } from "../lib/news-events";
 import { formatClock, formatDay, relativeTime } from "../lib/time";
 
 export type ViewMode = "live" | "history" | "replay";
+export type FeedViewMode = "events" | "all";
 
 interface NewsFeedProps {
-  items: NewsItem[];
+  items: FeedNewsItem[];
+  events: NewsEventGroup[];
+  feedView: FeedViewMode;
   mode: ViewMode;
   sources: SourceStatus[];
   selectedSources: Set<SourceId>;
   now: number;
   loading: boolean;
+  error: string | null;
   replayTime?: string;
   onModeLive: () => void;
+  onFeedViewChange: (mode: FeedViewMode) => void;
   onToggleSource: (source: SourceId) => void;
   onClearSources: () => void;
   onOpenQuery: () => void;
 }
 
-export function NewsFeed({ items, mode, sources, selectedSources, now, loading, replayTime, onModeLive, onToggleSource, onClearSources, onOpenQuery }: NewsFeedProps) {
+const groupingExplanation = "按时间、标题、主题与相关标的归并，可能存在误差；展开可查看全部原始报道。";
+
+export function NewsFeed({
+  items,
+  events,
+  feedView,
+  mode,
+  sources,
+  selectedSources,
+  now,
+  loading,
+  error,
+  replayTime,
+  onModeLive,
+  onFeedViewChange,
+  onToggleSource,
+  onClearSources,
+  onOpenQuery,
+}: NewsFeedProps) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  return (
+  const [groupingInfoOpen, setGroupingInfoOpen] = useState(false);
+  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
+  const sourceToggleRef = useRef<HTMLButtonElement>(null);
+  const sourceCloseRef = useRef<HTMLButtonElement>(null);
+  const sourceDialogRef = useRef<HTMLDivElement>(null);
+  const groupingInfoTriggerRef = useRef<HTMLButtonElement>(null);
+  const groupingInfoRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!sourcesOpen) return;
+    const appShell = document.querySelector<HTMLElement>(".app-shell");
+    const hadInert = appShell?.hasAttribute("inert") || false;
+    const previousAriaHidden = appShell?.getAttribute("aria-hidden") ?? null;
+    appShell?.setAttribute("inert", "");
+    appShell?.setAttribute("aria-hidden", "true");
+    sourceCloseRef.current?.focus();
+
+    const containFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSources();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const dialog = sourceDialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])"))
+        .filter((element) => element.getClientRects().length > 0);
+      if (!focusable.length) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", containFocus);
+    return () => {
+      window.removeEventListener("keydown", containFocus);
+      if (!hadInert) appShell?.removeAttribute("inert");
+      if (previousAriaHidden === null) appShell?.removeAttribute("aria-hidden");
+      else appShell?.setAttribute("aria-hidden", previousAriaHidden);
+    };
+  }, [sourcesOpen]);
+
+  useEffect(() => {
+    if (!groupingInfoOpen) return;
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (groupingInfoTriggerRef.current?.contains(target) || groupingInfoRef.current?.contains(target)) return;
+      setGroupingInfoOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setGroupingInfoOpen(false);
+      groupingInfoTriggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePress);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePress);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [groupingInfoOpen]);
+
+  function closeSources() {
+    setSourcesOpen(false);
+    window.requestAnimationFrame(() => sourceToggleRef.current?.focus());
+  }
+
+  function openSources() {
+    setGroupingInfoOpen(false);
+    setSourcesOpen(true);
+  }
+
+  const toggleEvent = (key: string) => {
+    setExpandedEvents((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const countText = feedView === "events"
+    ? `${events.length} 个事件 · ${items.length} 条报道`
+    : `${items.length} 条报道`;
+
+  return (<>
     <section className="news-column" aria-label="实时财经快讯">
       <div className="section-heading news-heading">
         <div>
@@ -38,78 +158,223 @@ export function NewsFeed({ items, mode, sources, selectedSources, now, loading, 
         </div>
       </div>
 
-      <div className="source-filter" aria-label="消息来源筛选">
-        <button type="button" className="source-filter-mobile-toggle" aria-expanded={sourcesOpen} aria-controls="source-filter-sheet" onClick={() => setSourcesOpen(true)}>
-          <ListFilter size={16} />来源
-          <span>{selectedSources.size ? `${selectedSources.size} 个` : `全部 ${sources.length}`}</span>
-        </button>
-        {sources.map((source) => {
-          const active = selectedSources.size === 0 || selectedSources.has(source.id);
-          return (
-            <button
-              key={source.id}
-              className={`source-filter-button source-${source.id} ${active ? "is-active" : ""}`}
-              onClick={() => onToggleSource(source.id)}
-              title={source.message || `${source.label} ${source.state}`}
-              aria-pressed={active}
-            >
-              <i />{source.label}
-            </button>
-          );
-        })}
-      </div>
-      <div id="source-filter-sheet" className={`source-filter-sheet ${sourcesOpen ? "is-open" : ""}`} role={sourcesOpen ? "dialog" : undefined} aria-modal={sourcesOpen || undefined} aria-label="选择快讯来源">
-        <header><div><strong>快讯来源</strong><span>{selectedSources.size ? `已选择 ${selectedSources.size} 个` : "显示全部来源"}</span></div><button type="button" onClick={() => setSourcesOpen(false)} aria-label="关闭来源筛选"><X size={18} /></button></header>
-        <div>
-          <button type="button" className={!selectedSources.size ? "is-active" : ""} aria-pressed={!selectedSources.size} onClick={onClearSources}><i className="is-all" />全部来源</button>
+      <div className="source-filter" aria-label="快讯显示选项">
+        <div className="feed-view-controls">
+          <div className="feed-view-switch" role="group" aria-label="快讯视图">
+            <button type="button" className={feedView === "events" ? "is-active" : ""} aria-pressed={feedView === "events"} onClick={() => onFeedViewChange("events")}>事件</button>
+            <button type="button" className={feedView === "all" ? "is-active" : ""} aria-pressed={feedView === "all"} onClick={() => onFeedViewChange("all")}>全部</button>
+          </div>
+          <button
+            ref={groupingInfoTriggerRef}
+            type="button"
+            className="feed-view-info"
+            aria-label="了解事件归并方式"
+            aria-expanded={groupingInfoOpen}
+            aria-controls="news-grouping-explanation"
+            aria-describedby={groupingInfoOpen ? "news-grouping-explanation" : undefined}
+            onClick={() => setGroupingInfoOpen((current) => !current)}
+          ><Info size={15} /></button>
+          {groupingInfoOpen ? (
+            <div ref={groupingInfoRef} id="news-grouping-explanation" className="feed-view-popover" role="tooltip">
+              {groupingExplanation}
+            </div>
+          ) : null}
+        </div>
+        <div className="source-filter-list" aria-label="消息来源筛选">
+          <button ref={sourceToggleRef} type="button" className="source-filter-mobile-toggle" aria-expanded={sourcesOpen} aria-controls="source-filter-sheet" onClick={openSources}>
+            <ListFilter size={16} />来源
+            <span>{selectedSources.size ? `${selectedSources.size} 个` : `全部 ${sources.length}`}</span>
+          </button>
           {sources.map((source) => {
             const active = selectedSources.size === 0 || selectedSources.has(source.id);
-            return <button type="button" className={`source-${source.id} ${active ? "is-active" : ""}`} aria-pressed={active} onClick={() => onToggleSource(source.id)} key={source.id}><i />{source.label}<span className={`status-dot is-${source.state}`} /></button>;
+            return (
+              <button
+                key={source.id}
+                className={`source-filter-button source-${source.id} ${active ? "is-active" : ""}`}
+                onClick={() => onToggleSource(source.id)}
+                title={source.message || `${source.label} ${source.state}`}
+                aria-pressed={active}
+              >
+                <i />{source.label}
+              </button>
+            );
           })}
         </div>
-        <button type="button" className="source-filter-sheet-done" onClick={() => setSourcesOpen(false)}>完成</button>
       </div>
 
       <div className="feed-context">
         <span>{mode === "live" ? <><Radio size={13} /> 实时滚动</> : mode === "replay" ? <><span className="replay-pulse" /> {replayTime ? formatClock(replayTime) : "待播放"}</> : <><Search size={13} /> 查询结果</>}</span>
-        <span>{items.length} 条</span>
+        <span className="feed-count" aria-live="polite" aria-atomic="true">{countText}</span>
       </div>
 
       <div className="news-list" role="feed" aria-busy={loading}>
         {loading && !items.length ? <NewsSkeleton /> : null}
-        {!loading && !items.length ? (
-          <div className="empty-state">
-            <CircleAlert size={22} />
-            <strong>当前时间范围暂无消息</strong>
-            <span>调整时间或来源后再次查询</span>
-          </div>
-        ) : null}
-        {items.map((item, index) => (
-          <article className={`news-item source-${item.source} ${index === 0 && mode === "live" ? "is-new" : ""}`} key={item.id}>
-            <div className="timeline-rail"><i /></div>
-            <div className="news-time">
-              <time dateTime={item.publishedAt}>{formatClock(item.publishedAt).slice(0, 5)}</time>
-              <span>{relativeTime(item.publishedAt, now)}</span>
-            </div>
-            <div className="news-body">
-              <div className="news-meta">
-                <span className="news-source">{item.sourceLabel}</span>
-                {item.important ? <span className="important-label">重要</span> : null}
-                {formatDay(item.publishedAt) !== formatDay(now) ? <span>{formatDay(item.publishedAt)}</span> : null}
-              </div>
-              <h2>{item.title}</h2>
-              {item.content !== item.title ? <p>{item.content}</p> : null}
-              {item.tags.length ? <div className="news-tags">{item.tags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}
-            </div>
-            {item.url ? (
-              <a className="source-link" href={item.url} target="_blank" rel="noreferrer" title="查看原文" aria-label={`查看${item.sourceLabel}原文`}>
-                <ArrowUpRight size={16} />
-              </a>
-            ) : null}
-          </article>
+        {!loading && error && !items.length ? <FeedState title="快讯加载失败" detail={error} /> : null}
+        {!loading && !error && !items.length ? <FeedState title="当前时间范围暂无消息" detail="调整时间或来源后再次查询" /> : null}
+        {feedView === "all" ? items.map((item, index) => (
+          <NewsArticle item={item} now={now} isNew={index === 0 && mode === "live"} key={item.id} />
+        )) : events.map((event, index) => event.itemCount === 1 ? (
+          <NewsArticle item={event.representative} now={now} isNew={index === 0 && mode === "live"} key={event.key} />
+        ) : (
+          <EventArticle
+            event={event}
+            now={now}
+            expanded={expandedEvents.has(event.key)}
+            isNew={index === 0 && mode === "live"}
+            onToggle={() => toggleEvent(event.key)}
+            key={event.key}
+          />
         ))}
       </div>
     </section>
+    {sourcesOpen ? createPortal(
+      <div className="source-filter-backdrop" onMouseDown={(event) => event.target === event.currentTarget && closeSources()}>
+        <div ref={sourceDialogRef} id="source-filter-sheet" className="source-filter-sheet" role="dialog" aria-modal="true" aria-labelledby="source-filter-title" tabIndex={-1}>
+          <header><div><strong id="source-filter-title">快讯来源</strong><span>{selectedSources.size ? `已选择 ${selectedSources.size} 个` : "显示全部来源"}</span></div><button ref={sourceCloseRef} type="button" onClick={closeSources} aria-label="关闭来源筛选"><X size={18} /></button></header>
+          <div>
+            <button type="button" className={!selectedSources.size ? "is-active" : ""} aria-pressed={!selectedSources.size} onClick={onClearSources}><i className="is-all" />全部来源</button>
+            {sources.map((source) => {
+              const active = selectedSources.size === 0 || selectedSources.has(source.id);
+              return <button type="button" className={`source-${source.id} ${active ? "is-active" : ""}`} aria-pressed={active} onClick={() => onToggleSource(source.id)} key={source.id}><i />{source.label}<span className={`status-dot is-${source.state}`} /></button>;
+            })}
+          </div>
+          <button type="button" className="source-filter-sheet-done" onClick={closeSources}>完成</button>
+        </div>
+      </div>,
+      document.body,
+    ) : null}
+  </>);
+}
+
+function NewsArticle({ item, now, isNew }: { item: FeedNewsItem; now: number; isNew: boolean }) {
+  return (
+    <article className={`news-item source-${item.source} ${isNew ? "is-new" : ""}`} aria-label={`${item.sourceLabel}：${item.title}`}>
+      <TimelineRail />
+      <NewsTime publishedAt={item.publishedAt} now={now} />
+      <div className="news-body">
+        <NewsMeta item={item} now={now} />
+        <h2>{item.title}</h2>
+        {shouldShowNewsContent(item.title, item.content) ? <p>{item.content}</p> : null}
+        <NewsTags tags={item.tags} />
+      </div>
+      <NewsSourceAccess item={item} />
+    </article>
+  );
+}
+
+function EventArticle({ event, now, expanded, isNew, onToggle }: { event: NewsEventGroup; now: number; expanded: boolean; isNew: boolean; onToggle: () => void }) {
+  const item = event.representative;
+  const detailsId = `news-event-details-${stableEventDomToken(event.key)}`;
+  const disclosureLabel = `${expanded ? "收起" : "展开"}${item.title}的 ${event.itemCount} 条原始报道`;
+  return (
+    <article className={`news-item news-event source-${item.source} ${expanded ? "is-expanded" : "is-collapsed"} ${isNew ? "is-new" : ""}`} aria-label={`事件：${item.title}，${event.sourceCount} 家来源，${event.itemCount} 条报道`}>
+      <TimelineRail />
+      <NewsTime publishedAt={event.latestAt} now={now} />
+      <div className="news-body news-event-body">
+        <div className="news-meta">
+          <span className="news-source">{item.sourceLabel}</span>
+          {event.important ? <span className="important-label">重要</span> : null}
+          {formatDay(event.latestAt) !== formatDay(now) ? <span>{formatDay(event.latestAt)}</span> : null}
+        </div>
+        <h2>{item.title}</h2>
+        {shouldShowNewsContent(item.title, item.content) ? <p>{item.content}</p> : null}
+        <NewsTags tags={item.tags} />
+        <div className="event-evidence-summary">
+          <span>{event.sourceCount} 家来源 · {event.itemCount} 条报道</span>
+          <button type="button" className="event-disclosure" aria-expanded={expanded} aria-controls={detailsId} aria-label={disclosureLabel} onClick={onToggle}>
+            <ChevronDown size={16} aria-hidden="true" />
+            <span>{expanded ? "收起报道" : "展开报道"}</span>
+          </button>
+        </div>
+        {expanded ? (
+          <div id={detailsId} className="event-evidence-list" aria-label={`${item.title}的原始报道`}>
+            {event.items.map((evidence) => <EvidenceItem item={evidence} key={evidence.id} />)}
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function EvidenceItem({ item }: { item: FeedNewsItem }) {
+  return (
+    <div className={`event-evidence-item source-${item.source}`}>
+      <i className="event-evidence-mark" />
+      <div>
+        <div className="event-evidence-meta">
+          <span>{item.sourceLabel}</span>
+          <time dateTime={item.publishedAt}>{formatDay(item.publishedAt)} {formatClock(item.publishedAt)}</time>
+          {item.important ? <b>重要</b> : null}
+        </div>
+        <h3>{item.title}</h3>
+        {shouldShowNewsContent(item.title, item.content) ? <p>{item.content}</p> : null}
+      </div>
+      <NewsSourceAccess item={item} />
+    </div>
+  );
+}
+
+function TimelineRail() {
+  return <div className="timeline-rail" aria-hidden="true"><i /></div>;
+}
+
+function NewsTime({ publishedAt, now }: { publishedAt: string; now: number }) {
+  return (
+    <div className="news-time">
+      <time dateTime={publishedAt}>{formatClock(publishedAt).slice(0, 5)}</time>
+      <span>{relativeTime(publishedAt, now)}</span>
+    </div>
+  );
+}
+
+function NewsMeta({ item, now }: { item: FeedNewsItem; now: number }) {
+  return (
+    <div className="news-meta">
+      <span className="news-source">{item.sourceLabel}</span>
+      {item.important ? <span className="important-label">重要</span> : null}
+      {formatDay(item.publishedAt) !== formatDay(now) ? <span>{formatDay(item.publishedAt)}</span> : null}
+    </div>
+  );
+}
+
+function NewsTags({ tags }: { tags: string[] | undefined }) {
+  return Array.isArray(tags) && tags.length ? <div className="news-tags">{tags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null;
+}
+
+function OriginalLink({ url, sourceLabel }: { url: string; sourceLabel: string }) {
+  return (
+    <a className="source-link" href={url} target="_blank" rel="noopener noreferrer" title={`查看${sourceLabel}单条原文`} aria-label={`查看${sourceLabel}单条原文`}>
+      <ArrowUpRight size={16} />
+    </a>
+  );
+}
+
+function NewsSourceAccess({ item }: { item: FeedNewsItem }) {
+  const access = newsLinkAccess(item.url);
+  if (access.kind === "article") return <OriginalLink url={access.url} sourceLabel={item.sourceLabel} />;
+  if (access.kind === "source-page") {
+    return (
+      <a
+        className="source-link-status is-source-page"
+        href={access.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={`打开${item.sourceLabel}来源聚合页（非单条原文）`}
+        aria-label={`打开${item.sourceLabel}来源聚合页（非单条原文）`}
+      ><ArrowUpRight size={14} /><span>来源聚合页</span></a>
+    );
+  }
+  const label = access.kind === "missing" ? "未提供单条原文链接" : "原文链接不可用";
+  return <span className="source-link-status" aria-label={`${item.sourceLabel}：${label}`}>{label}</span>;
+}
+
+function FeedState({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="empty-state" role="status">
+      <CircleAlert size={22} />
+      <strong>{title}</strong>
+      <span>{detail}</span>
+    </div>
   );
 }
 

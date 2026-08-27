@@ -19,6 +19,10 @@ export interface NewsItem {
   relatedStocks?: RelatedStock[];
 }
 
+export interface FeedNewsItem extends NewsItem {
+  eventId: string | null;
+}
+
 export interface AnalysisWord {
   text: string;
   count: number;
@@ -290,7 +294,7 @@ export interface RuntimeInfo {
 }
 
 export interface BootstrapPayload {
-  news: NewsItem[];
+  news: FeedNewsItem[];
   market: MarketSnapshot;
   sources: SourceStatus[];
 }
@@ -298,12 +302,12 @@ export interface BootstrapPayload {
 export interface ReplayPayload {
   from: string;
   to: string;
-  news: NewsItem[];
+  news: FeedNewsItem[];
   market: MarketSnapshot;
 }
 
 export type StreamEvent =
-  | { type: "news"; data: NewsItem[] }
+  | { type: "news"; data: FeedNewsItem[] }
   | { type: "market"; data: MarketSnapshot }
   | { type: "sources"; data: SourceStatus[] }
   | { type: "analysis"; data: { generatedAt: string; windows: number[] } }

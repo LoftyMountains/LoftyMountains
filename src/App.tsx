@@ -1,15 +1,16 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BootstrapPayload, MarketSnapshot, NewsItem, ReplayPayload, SourceId, SourceStatus } from "../shared/types";
+import type { BootstrapPayload, FeedNewsItem, MarketSnapshot, ReplayPayload, SourceId, SourceStatus } from "../shared/types";
 import { Header } from "./components/Header";
 import { MarketChart } from "./components/MarketChart";
-import { NewsFeed, type ViewMode } from "./components/NewsFeed";
+import { NewsFeed, type FeedViewMode, type ViewMode } from "./components/NewsFeed";
 import { QueryPanel } from "./components/QueryPanel";
 import { ReplayBar } from "./components/ReplayBar";
 import { apiUrl } from "./lib/api";
+import { groupNewsEvents } from "./lib/news-events";
 import { applyThemeMode, readThemeMode, type ThemeMode } from "./lib/theme";
 import { fromBeijingInput, toBeijingInput } from "./lib/time";
 
-function uniqueNews(items: NewsItem[]) {
+function uniqueNews(items: FeedNewsItem[]) {
   const seen = new Set<string>();
   return items.filter((item) => !seen.has(item.id) && Boolean(seen.add(item.id)));
 }
@@ -52,8 +53,8 @@ function InsightsFallback() {
 }
 
 export function App() {
-  const [liveNews, setLiveNews] = useState<NewsItem[]>([]);
-  const [historyNews, setHistoryNews] = useState<NewsItem[]>([]);
+  const [liveNews, setLiveNews] = useState<FeedNewsItem[]>([]);
+  const [historyNews, setHistoryNews] = useState<FeedNewsItem[]>([]);
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
   const [sources, setSources] = useState<SourceStatus[]>([]);
   const [connected, setConnected] = useState(false);
@@ -74,12 +75,13 @@ export function App() {
   const [theme, setTheme] = useState<ThemeMode>(readThemeMode);
   const [analysisRevision, setAnalysisRevision] = useState<string | null>(null);
   const [workspaceView, setWorkspaceView] = useState<"live" | "insights">("live");
+  const [feedView, setFeedView] = useState<FeedViewMode>("events");
   const latestLiveNewsAt = useRef<string | null>(null);
   const liveNewsSyncController = useRef<AbortController | null>(null);
   const lastLiveNewsSyncAt = useRef(0);
   const streamClientId = useRef(createStreamClientId());
 
-  const mergeLiveNews = useCallback((incoming: NewsItem[]) => {
+  const mergeLiveNews = useCallback((incoming: FeedNewsItem[]) => {
     setLiveNews((current) => {
       const merged = uniqueNews([...incoming, ...current])
         .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
@@ -111,7 +113,7 @@ export function App() {
         signal: controller.signal,
       });
       if (!response.ok) return;
-      const payload = await response.json() as { items: NewsItem[] };
+      const payload = await response.json() as { items: FeedNewsItem[] };
       mergeLiveNews(payload.items);
     } catch {
       // The stream watchdog or next foreground recovery retries missed items.
@@ -212,7 +214,7 @@ export function App() {
       nextEvents.addEventListener("heartbeat", () => markStreamActive(nextEvents));
       nextEvents.addEventListener("news", (event) => {
         if (!markStreamActive(nextEvents)) return;
-        const incoming = JSON.parse((event as MessageEvent<string>).data) as NewsItem[];
+        const incoming = JSON.parse((event as MessageEvent<string>).data) as FeedNewsItem[];
         mergeLiveNews(incoming);
       });
       nextEvents.addEventListener("market", (event) => {
@@ -305,6 +307,7 @@ export function App() {
 
   const rawItems = mode === "live" ? liveNews : mode === "history" ? historyNews : replayNews;
   const visibleItems = useMemo(() => rawItems.filter((item) => selectedSources.size === 0 || selectedSources.has(item.source)), [rawItems, selectedSources]);
+  const visibleEvents = useMemo(() => groupNewsEvents(visibleItems), [visibleItems]);
   const visibleMarket = mode === "replay" ? replayMarket : market;
 
   function toggleSource(source: SourceId) {
@@ -336,10 +339,9 @@ export function App() {
     try {
       const params = new URLSearchParams({ from: range.start, to: range.end, limit: "1000", remote: "1" });
       if (query.trim()) params.set("q", query.trim());
-      if (selectedSources.size) params.set("source", Array.from(selectedSources).join(","));
       const response = await fetch(`${apiUrl("/api/news")}?${params}`);
       if (!response.ok) throw new Error("查询失败");
-      const payload = await response.json() as { items: NewsItem[] };
+      const payload = await response.json() as { items: FeedNewsItem[] };
       setHistoryNews(payload.items);
       setMode("history");
       setQueryOpen(false);
@@ -395,13 +397,17 @@ export function App() {
             <main className="dashboard">
               <NewsFeed
                 items={visibleItems}
+                events={visibleEvents}
+                feedView={feedView}
                 mode={mode}
                 sources={sources}
                 selectedSources={selectedSources}
                 now={now}
                 loading={loading}
+                error={mode === "live" && !liveNews.length ? queryError : null}
                 replayTime={replayTime}
                 onModeLive={returnLive}
+                onFeedViewChange={setFeedView}
                 onToggleSource={toggleSource}
                 onClearSources={() => setSelectedSources(new Set())}
                 onOpenQuery={() => { setQueryError(null); setQueryOpen(true); }}
