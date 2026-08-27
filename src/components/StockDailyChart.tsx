@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChartNoAxesCombined, CircleAlert, LoaderCircle, PanelRightClose } from "lucide-react";
+import { ChartNoAxesCombined, CircleAlert, LoaderCircle, PanelRightClose, RotateCcw } from "lucide-react";
 import type { AnalysisDailyPoint, AnalysisDailySeries, AnalysisNode } from "../../shared/types";
 import { apiUrl } from "../lib/api";
 import { analysisNodeLabel } from "../lib/stocks";
@@ -72,6 +72,7 @@ export function StockDailyChart({ node, collapsed, peeking, onCollapse }: StockD
   const [points, setPoints] = useState<AnalysisDailyPoint[]>(node.dailyPrices || []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryRevision, setRetryRevision] = useState(0);
 
   useEffect(() => {
     const embedded = node.dailyPrices || [];
@@ -88,7 +89,10 @@ export function StockDailyChart({ node, collapsed, peeking, onCollapse }: StockD
       const params = new URLSearchParams({ symbol: node.symbol! });
       void fetch(`${apiUrl("/api/analysis/stock-daily")}?${params}`, { signal: controller.signal })
         .then(async (response) => {
-          if (!response.ok) throw new Error("日线行情暂不可用");
+          if (!response.ok) {
+            const failure = await response.json().catch(() => null) as { error?: string } | null;
+            throw new Error(failure?.error || "日线行情暂不可用，请稍后重试");
+          }
           const payload = await response.json() as AnalysisDailySeries;
           setPoints(payload.points);
         })
@@ -104,7 +108,7 @@ export function StockDailyChart({ node, collapsed, peeking, onCollapse }: StockD
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [node.dailyPrices, node.id, node.symbol]);
+  }, [node.dailyPrices, node.id, node.symbol, retryRevision]);
 
   const candles = useMemo(() => normalizeCandles(points), [points]);
   const model = useMemo(() => candles.length ? chartModel(candles) : null, [candles]);
@@ -144,6 +148,7 @@ export function StockDailyChart({ node, collapsed, peeking, onCollapse }: StockD
       {!model ? <div className={`insight-panel-empty ${error ? "is-error" : ""}`}>
         {loading ? <LoaderCircle className="is-spinning" size={22} /> : error ? <CircleAlert size={22} /> : <ChartNoAxesCombined size={22} />}
         <span>{loading ? "正在获取日线行情" : error || "日线行情暂不可用"}</span>
+        {error ? <button type="button" className="daily-chart-retry" onClick={() => setRetryRevision((value) => value + 1)}><RotateCcw size={15} />重试</button> : null}
       </div> : (
         <div
           className="stock-daily-chart"

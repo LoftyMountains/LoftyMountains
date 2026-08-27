@@ -47,7 +47,7 @@ function LeaderRow({ stock, rank }: { stock: IndustryLeaderStock; rank: number }
     <article className={`industry-leader-row ${quoteTone(stock)} ${available ? "" : "is-unavailable"}`}>
       <span className="industry-leader-rank">{String(rank).padStart(2, "0")}</span>
       <div className="industry-leader-identity">
-        <div><strong>{stock.name}</strong><span>{stock.symbol}</span></div>
+        <div><strong title={stock.name}>{stock.name}</strong><span>{stock.symbol}</span></div>
         <div className="industry-leader-business" title={stock.business}><span>产品</span>{stock.business}</div>
         <div className="industry-leader-meta">
           <b>{stock.exchange}</b>
@@ -66,7 +66,8 @@ function LeaderRow({ stock, rank }: { stock: IndustryLeaderStock; rank: number }
   );
 }
 
-function LeaderList({ stocks, empty }: { stocks: IndustryLeaderStock[]; empty: string }) {
+function LeaderList({ stocks, empty, loading = false }: { stocks: IndustryLeaderStock[]; empty: string; loading?: boolean }) {
+  if (loading) return <div className="industry-leader-skeleton" aria-label="正在加载候选股票">{Array.from({ length: 3 }, (_, index) => <div key={index}><i /><span /><b /></div>)}</div>;
   if (!stocks.length) return <div className="industry-leader-empty"><DatabaseZap size={19} /><span>{empty}</span></div>;
   return <div className="industry-leader-list">{stocks.map((stock, index) => <LeaderRow stock={stock} rank={index + 1} key={stock.symbol} />)}</div>;
 }
@@ -372,11 +373,11 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
           <div className="industry-china-groups">
             <section>
               <h3><span>A 股</span><small>沪深北</small></h3>
-              <LeaderList stocks={payload?.leaders.cn || []} empty="暂无 A 股候选" />
+              <LeaderList stocks={payload?.leaders.cn || []} empty="暂无 A 股候选" loading={loading && !payload} />
             </section>
             <section>
               <h3><span>港股</span><small>香港市场</small></h3>
-              <LeaderList stocks={payload?.leaders.hk || []} empty="暂无港股候选" />
+              <LeaderList stocks={payload?.leaders.hk || []} empty="暂无港股候选" loading={loading && !payload} />
             </section>
           </div>
         </section>
@@ -418,7 +419,7 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
 
         <section className="industry-market-pane is-us" aria-label="美国市场行业领航股" key={`us-${payload?.selectedSubIndustry || "loading"}`}>
           <header><div><i /><strong>美国市场</strong></div><span>NASDAQ · NYSE</span></header>
-          <LeaderList stocks={payload?.leaders.us || []} empty="暂无美股候选" />
+          <LeaderList stocks={payload?.leaders.us || []} empty="暂无美股候选" loading={loading && !payload} />
         </section>
       </div>
 

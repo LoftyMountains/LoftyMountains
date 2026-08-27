@@ -37,7 +37,7 @@ export function HotspotRadar({ words, connectedTopics, selected, onPreview, onTo
       <div className="hotspot-ranking" aria-label="热点主题排名">
         <div className="hotspot-ranking-heading">
           <span>热点排名</span>
-          <span>事件 · 突发 · 来源</span>
+          <span>事件 · 突发度 · 来源覆盖</span>
         </div>
         <ol>
           {ranking.map((word) => (
@@ -59,8 +59,8 @@ export function HotspotRadar({ words, connectedTopics, selected, onPreview, onTo
                 <b>{word.rank}</b>
                 <strong>{word.text}</strong>
                 <span>{word.count}</span>
-                <span className={word.burst >= 0 ? "is-burst" : "is-cooling"}>{word.burst >= 0 ? "+" : ""}{word.burst.toFixed(1)}</span>
-                <span>{Math.round(word.sourceDiversity * 100)}%</span>
+                <span className={word.burst > 0 ? "is-burst" : "is-cooling"} title={`突发度 ${word.burst.toFixed(1)}`}>{word.burst.toFixed(1)}</span>
+                <span title={`来源覆盖 ${Math.round(word.sourceDiversity * 100)}%`}>{Math.round(word.sourceDiversity * 100)}%</span>
               </button>
             </li>
           ))}

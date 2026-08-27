@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Activity, ChartNoAxesCombined, Clock3 } from "lucide-react";
+import { Activity, ChartNoAxesCombined, ChevronDown, ChevronUp, Clock3 } from "lucide-react";
 import type { CSSProperties, KeyboardEvent, PointerEvent } from "react";
 import type { MarketPoint, MarketSnapshot } from "../../shared/types";
 import { formatClock, formatFull } from "../lib/time";
@@ -24,6 +24,7 @@ export function MarketChart({ market, replaying }: MarketChartProps) {
   const [showAverage, setShowAverage] = useState(true);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [size, setSize] = useState(initialSize);
+  const [mobileExpanded, setMobileExpanded] = useState(() => typeof window === "undefined" || !window.matchMedia("(max-width: 840px)").matches);
   const canvasRef = useRef<HTMLDivElement>(null);
   const points = market?.points || [];
   const latest = points.at(-1);
@@ -100,7 +101,7 @@ export function MarketChart({ market, replaying }: MarketChartProps) {
   }
 
   return (
-    <section className="market-panel" aria-label="沪深300分时图">
+    <section className={`market-panel ${mobileExpanded ? "" : "is-mobile-collapsed"}`} aria-label="沪深300分时图">
       <div className="section-heading market-heading">
         <div>
           <div className="eyebrow">CHINA MARKET · 000300</div>
@@ -112,9 +113,12 @@ export function MarketChart({ market, replaying }: MarketChartProps) {
             {latest ? `${positive ? "+" : ""}${latest.change.toFixed(2)}  ${positive ? "+" : ""}${latest.changePercent.toFixed(2)}%` : "等待行情"}
           </span>
         </div>
+        <button type="button" className="mobile-market-toggle" onClick={() => setMobileExpanded((value) => !value)} aria-expanded={mobileExpanded} aria-controls="market-chart-details" aria-label={mobileExpanded ? "收起沪深300分时图" : "展开沪深300分时图"}>
+          {mobileExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+        </button>
       </div>
 
-      <div className="chart-toolbar">
+      <div id="market-chart-details" className="chart-toolbar">
         <div className="chart-state">
           <Activity size={14} />
           <span>{replaying ? "历史时间轴" : market?.delayed ? "行情延迟" : "分时行情"}</span>

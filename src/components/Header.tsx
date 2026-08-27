@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, ChartNoAxesCombined, Github, Monitor, Moon, Radio, SlidersHorizontal, Sun } from "lucide-react";
+import { ChartNoAxesCombined, Github, Monitor, Moon, Newspaper, Sun } from "lucide-react";
 import type { SourceStatus } from "../../shared/types";
 import type { ThemeMode } from "../lib/theme";
 import { formatClock, formatDay } from "../lib/time";
@@ -9,7 +9,6 @@ interface HeaderProps {
   sources: SourceStatus[];
   theme: ThemeMode;
   insightsActive: boolean;
-  signalsHidden: boolean;
   onInsightsClick: () => void;
   onThemeChange: (theme: ThemeMode) => void;
 }
@@ -20,98 +19,47 @@ const themeOptions = [
   { mode: "system" as const, label: "跟随系统", icon: Monitor },
 ];
 
-export function Header({ connected, serverTime, sources, theme, insightsActive, signalsHidden, onInsightsClick, onThemeChange }: HeaderProps) {
+export function Header({ connected, serverTime, sources, theme, insightsActive, onInsightsClick, onThemeChange }: HeaderProps) {
   const liveCount = sources.filter((source) => source.state === "live").length;
-  const pageMode = insightsActive ? "市场洞察" : "实时市场";
   return (
-    <>
-      <header className={`topbar ${insightsActive ? "is-insights-active" : ""}`}>
-        <div className="brand" aria-label="景行 Jingxing">
-          <img className="brand-mark" src={`${import.meta.env.BASE_URL}brand/jingxing-mark.svg?v=finance-1`} alt="" aria-hidden="true" />
-          <div>
-            <div className="brand-name">景行 <span>JINGXING</span></div>
-            <div className="brand-origin">高山仰止，景行行止</div>
-          </div>
-        </div>
-
-        <div
-          className={`dynamic-island ${connected ? "is-connected" : "is-reconnecting"} ${insightsActive ? "is-touchbar" : ""}`}
-          tabIndex={0}
-          aria-label={insightsActive
-            ? `热点与股票关联控制条，${connected ? "实时连接" : "正在重连"}`
-            : `北京时间 ${formatClock(serverTime)}，${connected ? "实时连接" : "正在重连"}，${liveCount} 个数据源在线，当前为${pageMode}`}
-        >
-          <div className="dynamic-island-primary">
-            <i className="dynamic-island-dot" aria-hidden="true" />
-            <time dateTime={serverTime}>{formatClock(serverTime)}</time>
-            <span>{connected ? "实时" : "重连"}</span>
-          </div>
-          <div className="dynamic-island-details" aria-hidden="true">
-            <span><small>日期</small>{formatDay(serverTime)}</span>
-            <span><small>时区</small>UTC+8</span>
-            <span><small>信号源</small>{liveCount}/{sources.length || 0} 在线</span>
-            <span><small>视图</small>{pageMode}</span>
-          </div>
-          <div className="touchbar-compact" aria-hidden={!insightsActive || undefined}>
-            <SlidersHorizontal size={15} />
-            <span>关联控制</span>
-          </div>
-          <div id="insights-touchbar-slot" className="insights-touchbar-slot" aria-hidden={!insightsActive || undefined} />
-        </div>
-
-        <div className="topbar-actions">
-          <button
-            className={`text-button header-insights-button ${insightsActive ? "is-active" : ""}`}
-            onClick={onInsightsClick}
-            aria-label={insightsActive ? "返回实时市场" : "打开市场洞察"}
-            aria-pressed={insightsActive}
-          >
-            {insightsActive ? <ArrowLeft size={16} /> : <ChartNoAxesCombined size={16} />}
-            <span>{insightsActive ? "返回实时" : "市场洞察"}</span>
-          </button>
-          <a
-            className="icon-button github-link"
-            href="https://github.com/LoftyMountains/LoftyMountains"
-            target="_blank"
-            rel="noreferrer"
-            title="查看 GitHub 仓库"
-            aria-label="查看 GitHub 仓库"
-          >
-            <Github size={17} />
-          </a>
-          <div className="theme-switcher" role="group" aria-label="颜色模式">
-            {themeOptions.map(({ mode, label, icon: Icon }) => (
-              <button
-                type="button"
-                className={theme === mode ? "is-active" : ""}
-                key={mode}
-                title={label}
-                aria-label={label}
-                aria-pressed={theme === mode}
-                onClick={() => onThemeChange(mode)}
-              >
-                <Icon size={14} />
-              </button>
-            ))}
-          </div>
-        </div>
-      </header>
-
-      <div className={`signal-strip ${signalsHidden ? "is-hidden" : ""}`} aria-hidden={signalsHidden}>
-        <div className="signal-lead"><Radio size={14} /> 全球财经信号</div>
-        <div className="source-marquee">
-          {sources.map((source) => (
-            <span className="source-signal" key={source.id}>
-              <i className={`status-dot is-${source.state}`} />
-              {source.label}
-              {source.latencyMs !== null && source.state === "live" ? <small>{source.latencyMs}ms</small> : null}
-            </span>
-          ))}
-        </div>
-        <div className="signal-meta">
-          <span><Activity size={13} /> {liveCount}/{sources.length} 在线</span>
+    <header className="topbar">
+      <div className="brand" aria-label="景行 Jingxing">
+        <img className="brand-mark" src={`${import.meta.env.BASE_URL}brand/jingxing-mark.svg?v=finance-1`} alt="" aria-hidden="true" />
+        <div>
+          <div className="brand-name">景行 <span>JINGXING</span></div>
+          <div className="brand-origin">高山仰止，景行行止</div>
         </div>
       </div>
-    </>
+
+      <nav className="workspace-switcher" aria-label="主要视图">
+        <button type="button" className={!insightsActive ? "is-active" : ""} aria-label="实时快讯" aria-current={!insightsActive ? "page" : undefined} onClick={() => insightsActive && onInsightsClick()}>
+          <Newspaper size={15} />
+          <span>快讯</span>
+        </button>
+        <button type="button" className={insightsActive ? "is-active" : ""} aria-label="市场洞察" aria-current={insightsActive ? "page" : undefined} onClick={() => !insightsActive && onInsightsClick()}>
+          <ChartNoAxesCombined size={15} />
+          <span>洞察</span>
+        </button>
+      </nav>
+
+      <div className="topbar-actions">
+        <div className={`market-status ${connected ? "is-connected" : "is-reconnecting"}`} aria-label={`北京时间 ${formatClock(serverTime)}，${connected ? "实时连接" : "正在重连"}，${liveCount} 个数据源在线`}>
+          <i aria-hidden="true" />
+          <time dateTime={serverTime}>{formatClock(serverTime)}</time>
+          <span>{connected ? `${liveCount}/${sources.length || 0} 在线` : "重连中"}</span>
+        </div>
+        <a className="icon-button github-link" href="https://github.com/LoftyMountains/LoftyMountains" target="_blank" rel="noreferrer" title="查看 GitHub 仓库" aria-label="查看 GitHub 仓库">
+          <Github size={17} />
+        </a>
+        <div className="theme-switcher" role="group" aria-label="颜色模式">
+          {themeOptions.map(({ mode, label, icon: Icon }) => (
+            <button type="button" className={theme === mode ? "is-active" : ""} key={mode} title={label} aria-label={label} aria-pressed={theme === mode} onClick={() => onThemeChange(mode)}>
+              <Icon size={14} />
+            </button>
+          ))}
+        </div>
+      </div>
+      <span className="topbar-date" aria-hidden="true">{formatDay(serverTime)}</span>
+    </header>
   );
 }

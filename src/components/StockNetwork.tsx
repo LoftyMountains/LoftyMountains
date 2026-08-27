@@ -21,6 +21,9 @@ interface StockNetworkProps {
   onPreviewEnd?: () => void;
   highlightedNodeId?: string | null;
   onClearSelection?: () => void;
+  totalNodeCount?: number;
+  expanded?: boolean;
+  onToggleScope?: () => void;
 }
 
 interface ZoomControls {
@@ -183,7 +186,7 @@ function constrainPosition(width: number, height: number, x: number, y: number):
   return constrained;
 }
 
-export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系证据不足", onPreview, onTogglePreview, onPreviewEnd, highlightedNodeId = null, onClearSelection }: StockNetworkProps) {
+export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系证据不足", onPreview, onTogglePreview, onPreviewEnd, highlightedNodeId = null, onClearSelection, totalNodeCount = nodes.length, expanded = false, onToggleScope }: StockNetworkProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const controlsRef = useRef<ZoomControls | null>(null);
@@ -281,9 +284,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .join("line")
       .attr("stroke", "transparent")
       .attr("stroke-width", (link) => Math.max(12, 4 + link.weight * 6))
-      .attr("tabindex", 0)
-      .attr("role", "button")
-      .attr("aria-label", (link) => `${relationshipLabels[link.type]}，共同事件 ${link.cooccurrenceCount}，NPMI ${link.npmi.toFixed(2)}，${confidenceLabels[link.confidence]}`)
+      .attr("aria-hidden", "true")
       .style("pointer-events", "stroke")
       .style("cursor", "help")
       .on("mouseenter", showLinkPreview)
@@ -318,7 +319,7 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
       .data(graphNodes)
       .join("g")
       .attr("class", (node) => `network-node is-${node.type} direction-${node.direction} ${periodChangeClass(node)}`)
-      .attr("tabindex", 0)
+      .attr("tabindex", (_node, index) => index === 0 ? 0 : -1)
       .attr("role", "button")
       .attr("aria-label", (node) => `${node.type === "stock" ? "股票" : "主题"} ${analysisNodeLabel(node)}，${node.type === "stock" ? `${periodChangeLabel(node)}，` : ""}${node.mentions} 个事件，舆情${directionLabels[node.direction]}`)
       .style("--price-strength", (node) => `${periodChangeStrength(node)}%`)
@@ -342,6 +343,16 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
         onTogglePreview?.(node, { x: event.clientX, y: event.clientY });
       })
       .on("keydown", (event, node) => {
+        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+          event.preventDefault();
+          const elements = nodeSelection.nodes();
+          const current = elements.indexOf(event.currentTarget as SVGGElement);
+          const direction = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+          const next = elements[(current + direction + elements.length) % elements.length];
+          elements.forEach((element) => element.setAttribute("tabindex", element === next ? "0" : "-1"));
+          next?.focus();
+          return;
+        }
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         event.stopPropagation();
@@ -488,6 +499,11 @@ export function StockNetwork({ nodes, links, emptyMessage = "当前窗口关系�
         <button type="button" className="icon-button" onClick={() => controlsRef.current?.out()} title="缩小" aria-label="缩小"><ZoomOut size={16} /></button>
         <button type="button" className="icon-button" onClick={() => controlsRef.current?.reset()} title="重置视图" aria-label="重置视图"><RotateCcw size={16} /></button>
       </div>
+      {onToggleScope && totalNodeCount > 12 ? (
+        <button type="button" className="network-scope-button" onClick={onToggleScope} aria-pressed={expanded}>
+          {expanded ? "收起核心" : `显示更多关系 · ${totalNodeCount - nodes.length}`}
+        </button>
+      ) : null}
       <svg ref={svgRef} className="network-svg" role="img" aria-label="主题与股票关联图" />
       {!links.length ? <div className="analysis-empty">{emptyMessage}</div> : null}
       {linkPreview ? (

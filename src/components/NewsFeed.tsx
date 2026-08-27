@@ -1,4 +1,5 @@
-import { ArrowUpRight, CalendarSearch, CircleAlert, Radio, RotateCcw, Search } from "lucide-react";
+import { useState } from "react";
+import { ArrowUpRight, CalendarSearch, CircleAlert, ListFilter, Radio, RotateCcw, Search, X } from "lucide-react";
 import type { NewsItem, SourceId, SourceStatus } from "../../shared/types";
 import { formatClock, formatDay, relativeTime } from "../lib/time";
 
@@ -14,10 +15,12 @@ interface NewsFeedProps {
   replayTime?: string;
   onModeLive: () => void;
   onToggleSource: (source: SourceId) => void;
+  onClearSources: () => void;
   onOpenQuery: () => void;
 }
 
-export function NewsFeed({ items, mode, sources, selectedSources, now, loading, replayTime, onModeLive, onToggleSource, onOpenQuery }: NewsFeedProps) {
+export function NewsFeed({ items, mode, sources, selectedSources, now, loading, replayTime, onModeLive, onToggleSource, onClearSources, onOpenQuery }: NewsFeedProps) {
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   return (
     <section className="news-column" aria-label="实时财经快讯">
       <div className="section-heading news-heading">
@@ -36,6 +39,10 @@ export function NewsFeed({ items, mode, sources, selectedSources, now, loading, 
       </div>
 
       <div className="source-filter" aria-label="消息来源筛选">
+        <button type="button" className="source-filter-mobile-toggle" aria-expanded={sourcesOpen} aria-controls="source-filter-sheet" onClick={() => setSourcesOpen(true)}>
+          <ListFilter size={16} />来源
+          <span>{selectedSources.size ? `${selectedSources.size} 个` : `全部 ${sources.length}`}</span>
+        </button>
         {sources.map((source) => {
           const active = selectedSources.size === 0 || selectedSources.has(source.id);
           return (
@@ -50,6 +57,17 @@ export function NewsFeed({ items, mode, sources, selectedSources, now, loading, 
             </button>
           );
         })}
+      </div>
+      <div id="source-filter-sheet" className={`source-filter-sheet ${sourcesOpen ? "is-open" : ""}`} role={sourcesOpen ? "dialog" : undefined} aria-modal={sourcesOpen || undefined} aria-label="选择快讯来源">
+        <header><div><strong>快讯来源</strong><span>{selectedSources.size ? `已选择 ${selectedSources.size} 个` : "显示全部来源"}</span></div><button type="button" onClick={() => setSourcesOpen(false)} aria-label="关闭来源筛选"><X size={18} /></button></header>
+        <div>
+          <button type="button" className={!selectedSources.size ? "is-active" : ""} aria-pressed={!selectedSources.size} onClick={onClearSources}><i className="is-all" />全部来源</button>
+          {sources.map((source) => {
+            const active = selectedSources.size === 0 || selectedSources.has(source.id);
+            return <button type="button" className={`source-${source.id} ${active ? "is-active" : ""}`} aria-pressed={active} onClick={() => onToggleSource(source.id)} key={source.id}><i />{source.label}<span className={`status-dot is-${source.state}`} /></button>;
+          })}
+        </div>
+        <button type="button" className="source-filter-sheet-done" onClick={() => setSourcesOpen(false)}>完成</button>
       </div>
 
       <div className="feed-context">
