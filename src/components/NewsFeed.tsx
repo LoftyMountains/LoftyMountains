@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { ArrowUpRight, CalendarSearch, ChevronDown, CircleAlert, Info, ListFilter, Radio, RotateCcw, Search, X } from "lucide-react";
 import type { FeedNewsItem, SourceId, SourceStatus } from "../../shared/types";
 import { newsLinkAccess, shouldShowNewsContent, stableEventDomToken, type NewsEventGroup } from "../lib/news-events";
+import type { NewsQueryCompleteness } from "../lib/news-query";
 import { formatClock, formatDay, relativeTime } from "../lib/time";
 
 export type ViewMode = "live" | "history" | "replay";
@@ -16,9 +17,15 @@ interface NewsFeedProps {
   sources: SourceStatus[];
   selectedSources: Set<SourceId>;
   now: number;
+  replayCursorMs?: number;
+  replayPlaying?: boolean;
+  replayEnded?: boolean;
   loading: boolean;
   error: string | null;
   replayTime?: string;
+  historyCompleteness: NewsQueryCompleteness | null;
+  historyCompletenessRevision: number;
+  historyReturnedCount: number;
   onModeLive: () => void;
   onFeedViewChange: (mode: FeedViewMode) => void;
   onToggleSource: (source: SourceId) => void;
@@ -26,7 +33,7 @@ interface NewsFeedProps {
   onOpenQuery: () => void;
 }
 
-const groupingExplanation = "按时间、标题、主题与相关标的归并，可能存在误差；展开可查看全部原始报道。";
+const groupingExplanation = "按时间、标题、主题与相关标的归并，可能存在误差；展开可查看当前列表中归入本组的报道。";
 
 export function NewsFeed({
   items,
@@ -36,9 +43,15 @@ export function NewsFeed({
   sources,
   selectedSources,
   now,
+  replayCursorMs,
+  replayPlaying = false,
+  replayEnded = false,
   loading,
   error,
   replayTime,
+  historyCompleteness,
+  historyCompletenessRevision,
+  historyReturnedCount,
   onModeLive,
   onFeedViewChange,
   onToggleSource,
@@ -140,6 +153,10 @@ export function NewsFeed({
   const countText = feedView === "events"
     ? `${events.length} 个事件 · ${items.length} 条报道`
     : `${items.length} 条报道`;
+  const showHistoryIntegrity = mode === "history" && historyCompleteness && historyCompleteness.status !== "complete";
+  const showFilteredEmpty = mode === "history" && historyReturnedCount > 0 && items.length === 0;
+  const showEmptyResult = mode !== "history" || historyCompleteness?.status === "complete";
+  const contentNow = mode === "replay" && replayCursorMs !== undefined ? replayCursorMs : now;
 
   return (<>
     <section className="news-column" aria-label="实时财经快讯">
@@ -152,7 +169,7 @@ export function NewsFeed({
           {mode !== "live" ? (
             <button className="text-button" onClick={onModeLive}><RotateCcw size={15} />返回实时</button>
           ) : null}
-          <button className="icon-button" onClick={onOpenQuery} title="时间查询与回放" aria-label="时间查询与回放">
+          <button className="icon-button" data-query-focus-return="primary" onClick={onOpenQuery} title="时间查询与回放" aria-label="时间查询与回放">
             <CalendarSearch size={18} />
           </button>
         </div>
@@ -203,22 +220,32 @@ export function NewsFeed({
       </div>
 
       <div className="feed-context">
-        <span>{mode === "live" ? <><Radio size={13} /> 实时滚动</> : mode === "replay" ? <><span className="replay-pulse" /> {replayTime ? formatClock(replayTime) : "待播放"}</> : <><Search size={13} /> 查询结果</>}</span>
-        <span className="feed-count" aria-live="polite" aria-atomic="true">{countText}</span>
+        <span className={mode === "replay" ? `replay-context is-${replayPlaying ? "playing" : replayEnded ? "ended" : "paused"}` : undefined}>{mode === "live" ? <><Radio size={13} /> 实时滚动</> : mode === "replay" ? <><span className="replay-pulse" /><span className="replay-state-label">{replayPlaying ? "播放中" : replayEnded ? "已结束" : "已暂停"}</span> {replayTime ? formatClock(replayTime) : "待播放"}</> : <><Search size={13} /> 查询结果</>}</span>
+        <span className="feed-count" aria-live={mode === "replay" ? undefined : "polite"} aria-atomic="true">{countText}</span>
       </div>
+
+      {showHistoryIntegrity ? (
+        <HistoryIntegrityNotice
+          completeness={historyCompleteness}
+          revision={historyCompletenessRevision}
+          onOpenQuery={onOpenQuery}
+        />
+      ) : null}
 
       <div className="news-list" role="feed" aria-busy={loading}>
         {loading && !items.length ? <NewsSkeleton /> : null}
         {!loading && error && !items.length ? <FeedState title="快讯加载失败" detail={error} /> : null}
-        {!loading && !error && !items.length ? <FeedState title="当前时间范围暂无消息" detail="调整时间或来源后再次查询" /> : null}
+        {!loading && !error && showFilteredEmpty ? <FeedState title="当前来源筛选暂无消息" detail="调整来源筛选后查看这批查询结果" /> : null}
+        {!loading && !error && mode === "replay" && !items.length ? <FeedState title="等待该时刻的消息" detail="本次回放中的消息尚未到达当前时间，或当前来源筛选无匹配" /> : null}
+        {!loading && !error && mode !== "replay" && !showFilteredEmpty && !items.length && showEmptyResult ? <FeedState title="当前时间范围暂无消息" detail="调整时间或来源后再次查询" /> : null}
         {feedView === "all" ? items.map((item, index) => (
-          <NewsArticle item={item} now={now} isNew={index === 0 && mode === "live"} key={item.id} />
+          <NewsArticle item={item} now={contentNow} isNew={index === 0 && mode === "live"} key={item.id} />
         )) : events.map((event, index) => event.itemCount === 1 ? (
-          <NewsArticle item={event.representative} now={now} isNew={index === 0 && mode === "live"} key={event.key} />
+          <NewsArticle item={event.representative} now={contentNow} isNew={index === 0 && mode === "live"} key={event.key} />
         ) : (
           <EventArticle
             event={event}
-            now={now}
+            now={contentNow}
             expanded={expandedEvents.has(event.key)}
             isNew={index === 0 && mode === "live"}
             onToggle={() => toggleEvent(event.key)}
@@ -244,6 +271,31 @@ export function NewsFeed({
       document.body,
     ) : null}
   </>);
+}
+
+function HistoryIntegrityNotice({
+  completeness,
+  revision,
+  onOpenQuery,
+}: {
+  completeness: Exclude<NewsQueryCompleteness, { status: "complete" }>;
+  revision: number;
+  onOpenQuery: () => void;
+}) {
+  const truncated = completeness.status === "truncated";
+  const limit = truncated ? new Intl.NumberFormat("zh-CN").format(completeness.limit) : null;
+  return (
+    <div className={`history-integrity is-${completeness.status}`} role="status" aria-live="polite" aria-atomic="true" key={revision}>
+      <CircleAlert size={18} aria-hidden="true" />
+      <div>
+        <strong>{truncated ? "结果已截断" : "本次结果完整性未知"}</strong>
+        <span>{truncated
+          ? `仅显示当前已获取结果中最新 ${limit} 条，较早匹配项未展示。来源筛选只作用于这批结果。`
+          : "服务端未提供可信的结果边界，请缩短时间范围后重试。来源筛选只作用于当前这批结果。"}</span>
+      </div>
+      <button type="button" data-query-focus-return="integrity" onClick={onOpenQuery}><CalendarSearch size={16} />调整查询</button>
+    </div>
+  );
 }
 
 function NewsArticle({ item, now, isNew }: { item: FeedNewsItem; now: number; isNew: boolean }) {

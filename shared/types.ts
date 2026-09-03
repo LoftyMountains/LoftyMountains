@@ -23,6 +23,19 @@ export interface FeedNewsItem extends NewsItem {
   eventId: string | null;
 }
 
+export const NEWS_QUERY_MAX_LIMIT = 1_000;
+
+export interface NewsQueryResultMetadata {
+  returnedCount: number;
+  limit: number;
+  truncated: boolean;
+}
+
+export interface NewsQueryResponse {
+  items: FeedNewsItem[];
+  result: NewsQueryResultMetadata;
+}
+
 export interface AnalysisWord {
   text: string;
   count: number;
@@ -179,7 +192,7 @@ export interface IndustryLeaderQuote {
   currency: "CNY" | "HKD" | "USD" | null;
   marketCapCurrency: "CNY" | "HKD" | "USD" | null;
   provider: string;
-  updatedAt: string;
+  updatedAt: string | null;
   reason?: string | null;
 }
 

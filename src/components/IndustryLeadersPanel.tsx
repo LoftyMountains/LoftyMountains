@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, CircleAlert, DatabaseZap, LoaderCircle, PanelTopClose, PanelTopOpen, Search, TrendingUp } from "lucide-react";
 import type { IndustryCatalogEntry, IndustryLeaderLiveQuotesPayload, IndustryLeaderStock, IndustryLeadersPayload } from "../../shared/types";
 import { apiUrl } from "../lib/api";
+import { classifyLeaderQuote, markLeaderQuoteBatchFailure, mergeLeaderQuoteHealth, quoteFreshnessClass, quoteFreshnessLabel, trustedQuoteTimestamp, type LeaderQuoteFreshness, type LeaderQuoteHealth } from "../lib/industry-leader-freshness";
 import { formatClock, formatFull } from "../lib/time";
 
 const payloadCache = new Map<string, { payload: IndustryLeadersPayload; etag: string | null; fetchedAt: number }>();
@@ -34,17 +35,19 @@ function quoteTone(stock: IndustryLeaderStock) {
   return change === null || change === 0 ? "is-flat" : change > 0 ? "is-up" : "is-down";
 }
 
-function LeaderRow({ stock, rank }: { stock: IndustryLeaderStock; rank: number }) {
+function LeaderRow({ stock, rank, now, health }: { stock: IndustryLeaderStock; rank: number; now: number; health?: LeaderQuoteHealth }) {
   const available = stock.quote.status === "available";
-  const quoteState = stock.quote.tradingState === "trading" && stock.quote.realtime
-    ? { label: "实时", className: "is-live" }
-    : stock.quote.tradingState === "trading"
-      ? { label: "延时", className: "is-delayed" }
-    : stock.quote.tradingState === "closed"
-      ? { label: "收盘", className: "is-closed" }
-      : { label: "快照", className: "is-snapshot" };
+  const quoteState = classifyLeaderQuote(stock.quote, now, health, stock.market);
+  const quoteLabel = quoteFreshnessLabel(quoteState);
+  const updatedAt = trustedQuoteTimestamp(stock.quote.updatedAt, now);
+  const quoteTime = updatedAt === null ? "更新时间未知" : `截至 ${formatClock(updatedAt)}`;
+  const provider = stock.quote.provider || "来源未知";
+  const reason = health?.failureReason || (health?.consecutiveFailures && health.consecutiveFailures >= 2 ? "行情更新失败，沿用最近报价" : stock.quote.reason);
+  const quoteDescription = available
+    ? `${quoteLabel}，${quoteTime}，来源 ${provider}${reason ? `，${reason}` : ""}`
+    : `${quoteLabel}，${reason || "暂无可用报价"}`;
   return (
-    <article className={`industry-leader-row ${quoteTone(stock)} ${available ? "" : "is-unavailable"}`}>
+    <article className={`industry-leader-row ${quoteTone(stock)} ${available ? "" : "is-unavailable"}`} aria-label={`${stock.name} ${quoteDescription}`}>
       <span className="industry-leader-rank">{String(rank).padStart(2, "0")}</span>
       <div className="industry-leader-identity">
         <div><strong title={stock.name}>{stock.name}</strong><span>{stock.symbol}</span></div>
@@ -57,19 +60,23 @@ function LeaderRow({ stock, rank }: { stock: IndustryLeaderStock; rank: number }
       </div>
       <div className="industry-leader-quote">
         <strong>{available ? compactPrice(stock) : "--"}</strong>
-        <span>{available ? <>
+        <span className="industry-leader-change">{available ? <>
           <b>{signedPercent(stock.quote.changePercent)}</b>
-          <em className={quoteState.className} title={`${stock.quote.provider} · ${formatFull(stock.quote.updatedAt)}`}><i />{quoteState.label}</em>
-        </> : stock.quote.reason || "行情不可用"}</span>
+          <em className={quoteFreshnessClass(quoteState)}><i />{quoteLabel}</em>
+        </> : reason || "行情不可用"}</span>
+        <small className="industry-leader-quote-facts">
+          <span>{quoteTime}</span>
+          <span>{provider}</span>
+        </small>
       </div>
     </article>
   );
 }
 
-function LeaderList({ stocks, empty, loading = false }: { stocks: IndustryLeaderStock[]; empty: string; loading?: boolean }) {
+function LeaderList({ stocks, empty, loading = false, now, healthBySymbol }: { stocks: IndustryLeaderStock[]; empty: string; loading?: boolean; now: number; healthBySymbol: Record<string, LeaderQuoteHealth> }) {
   if (loading) return <div className="industry-leader-skeleton" aria-label="正在加载候选股票">{Array.from({ length: 3 }, (_, index) => <div key={index}><i /><span /><b /></div>)}</div>;
   if (!stocks.length) return <div className="industry-leader-empty"><DatabaseZap size={19} /><span>{empty}</span></div>;
-  return <div className="industry-leader-list">{stocks.map((stock, index) => <LeaderRow stock={stock} rank={index + 1} key={stock.symbol} />)}</div>;
+  return <div className="industry-leader-list">{stocks.map((stock, index) => <LeaderRow stock={stock} rank={index + 1} health={healthBySymbol[stock.symbol]} now={now} key={stock.symbol} />)}</div>;
 }
 
 export function IndustryLeadersPanel({ hours, revision }: { hours: number; revision: number }) {
@@ -79,6 +86,12 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [quoteNow, setQuoteNow] = useState(() => Date.now());
+  const [quoteHealth, setQuoteHealth] = useState<Record<string, LeaderQuoteHealth>>({});
+  const [quotePolling, setQuotePolling] = useState(false);
+  const [quoteBatchError, setQuoteBatchError] = useState<string | null>(null);
+  const [quoteAnnouncement, setQuoteAnnouncement] = useState("");
+  const [quoteAnnouncementRevision, setQuoteAnnouncementRevision] = useState(0);
   const [bridgeMotion, setBridgeMotion] = useState<"next" | "previous" | null>(null);
   const [catalogCollapsed, setCatalogCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -92,6 +105,13 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
   const wheelGestureTimer = useRef<number | null>(null);
   const bridgeMotionTimer = useRef<number | null>(null);
   const bridgeMotionFrame = useRef<number | null>(null);
+  const quoteSummaryRef = useRef<string | null>(null);
+  const quoteSummaryIssueRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setQuoteNow(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -140,16 +160,28 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
 
   useEffect(() => {
     if (!quoteSymbols) return;
+    setQuoteHealth({});
+    setQuoteBatchError(null);
+    // A newly selected sub-industry is a new quote scope; do not announce
+    // recovery or degradation carried over from the previous scope.
+    quoteSummaryRef.current = null;
+    quoteSummaryIssueRef.current = null;
     let stopped = false;
     let timer: number | undefined;
     let controller: AbortController | null = null;
+    const symbols = quoteSymbols.split(",").filter(Boolean);
 
     const schedule = (delayMs: number) => {
       if (!stopped) timer = window.setTimeout(() => void poll(), delayMs);
     };
+    const updateHealth = (updater: (current: Record<string, LeaderQuoteHealth>) => Record<string, LeaderQuoteHealth>) => {
+      if (!stopped) setQuoteHealth(updater);
+    };
     const mergeQuotes = (next: IndustryLeaderLiveQuotesPayload) => {
+      if (stopped) return;
+      updateHealth((current) => mergeLeaderQuoteHealth(symbols, current, next.quotes));
       setPayload((current) => {
-        if (!current) return current;
+        if (stopped || !current) return current;
         const leaders = Object.fromEntries(Object.entries(current.leaders).map(([market, stocks]) => [market, stocks.map((stock) => {
           const quote = next.quotes[stock.symbol];
           if (!quote || quote.status !== "available") return stock;
@@ -171,10 +203,13 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
         schedule(10_000);
         return;
       }
-      controller?.abort();
+      // Visibility changes and timer callbacks may arrive together. Keep one
+      // request in flight and let cleanup abort it when the symbol scope ends.
+      if (controller && !controller.signal.aborted) return;
       const requestController = new AbortController();
       controller = requestController;
       let pollAfterMs = 10_000;
+      setQuotePolling(true);
       try {
         const params = new URLSearchParams({ symbols: quoteSymbols });
         const response = await fetch(`${apiUrl("/api/industry-leaders/quotes")}?${params}`, {
@@ -183,12 +218,24 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
         });
         if (!response.ok) throw new Error("实时行情暂不可用");
         const next = await response.json() as IndustryLeaderLiveQuotesPayload;
+        if (stopped || requestController.signal.aborted || controller !== requestController) return;
         pollAfterMs = Math.max(5_000, Math.min(30_000, next.pollAfterMs));
         mergeQuotes(next);
+        const hasMissing = symbols.some((symbol) => !next.quotes[symbol] || next.quotes[symbol]?.status !== "available");
+        if (!stopped && controller === requestController) setQuoteBatchError(hasMissing ? "部分标的本轮未返回，沿用最近报价" : null);
       } catch (reason) {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
+        if (stopped || requestController.signal.aborted || controller !== requestController) return;
+        setQuoteBatchError("行情更新失败，沿用最近报价");
+        updateHealth((current) => markLeaderQuoteBatchFailure(symbols, current));
       } finally {
-        if (!requestController.signal.aborted) schedule(pollAfterMs);
+        if (controller === requestController) {
+          controller = null;
+          if (!stopped) {
+            setQuotePolling(false);
+            if (!requestController.signal.aborted) schedule(pollAfterMs);
+          }
+        }
       }
     }
     const refreshWhenVisible = () => {
@@ -202,6 +249,7 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
       stopped = true;
       if (timer !== undefined) window.clearTimeout(timer);
       controller?.abort();
+      setQuotePolling(false);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [quoteSymbols]);
@@ -230,6 +278,52 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value)}`;
+
+  const quoteSummary = useMemo(() => {
+    const stocks = Object.values(payload?.leaders || {}).flat();
+    const counts: Record<LeaderQuoteFreshness, number> = {
+      live: 0,
+      delayed: 0,
+      closed: 0,
+      unknown: 0,
+      unavailable: 0,
+      error: 0,
+    };
+    stocks.forEach((stock) => {
+      counts[classifyLeaderQuote(stock.quote, quoteNow, quoteHealth[stock.symbol], stock.market)] += 1;
+    });
+    const parts = [
+      counts.live ? `${counts.live} 只实时` : "",
+      counts.delayed ? `${counts.delayed} 只延迟` : "",
+      counts.closed ? `${counts.closed} 只收盘` : "",
+      counts.error ? `${counts.error} 只更新失败` : "",
+      counts.unknown ? `${counts.unknown} 只状态未知` : "",
+      counts.unavailable ? `${counts.unavailable} 只不可用` : "",
+    ].filter(Boolean);
+    const issue = Boolean(quoteBatchError) || counts.error > 0 || counts.unavailable > 0 || counts.unknown > 0 || counts.delayed > 0;
+    return {
+      counts,
+      issue,
+      signature: `${parts.join("|")}|${quoteBatchError ? "batch-error" : "ok"}`,
+      label: stocks.length ? parts.join(" · ") : "等待首批报价",
+    };
+  }, [payload, quoteBatchError, quoteHealth, quoteNow]);
+
+  useEffect(() => {
+    const previous = quoteSummaryRef.current;
+    if (previous && previous !== quoteSummary.signature) {
+      const previousHadIssue = quoteSummaryIssueRef.current === true;
+      if (quoteSummary.issue && !previousHadIssue) {
+        setQuoteAnnouncement("行业领航行情状态已变化，请查看延迟或失败标记");
+        setQuoteAnnouncementRevision((revision) => revision + 1);
+      } else if (!quoteSummary.issue && previousHadIssue) {
+        setQuoteAnnouncement("行业领航行情已恢复");
+        setQuoteAnnouncementRevision((revision) => revision + 1);
+      }
+    }
+    quoteSummaryRef.current = quoteSummary.signature;
+    quoteSummaryIssueRef.current = quoteSummary.issue;
+  }, [quoteSummary]);
 
   const selectSubIndustry = (entry: IndustryCatalogEntry) => {
     if (entry.id === activeSubIndustry) return;
@@ -357,15 +451,21 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
         </div>
       </div>
 
-      <div className="industry-leader-status" aria-live="polite">
+      <div className="industry-leader-status">
         <div>
           <TrendingUp size={16} />
           <strong>{payload?.selectedSubIndustryLabel || "子行业对照"}</strong>
           {activeEntry ? <span>{activeEntry.sectorLabel} · {activeEntry.stockCount} 只候选股 · {activeEntry.marketCount} 个市场 · {activeEntry.eventCount} 个近期事件</span> : null}
         </div>
-        <span>{loading ? <><LoaderCircle className="is-spinning" size={14} />正在更新公开行情</> : universe ? `名录更新于 ${formatClock(universe.refreshedAt)}` : "等待数据"}</span>
+        <div className="industry-leader-quote-summary" aria-label={`行情状态：${quoteSummary.label}`}>
+          {quotePolling ? <><LoaderCircle className="is-spinning" size={14} />正在更新行情</> : <span>{quoteSummary.label}</span>}
+          {quoteBatchError ? <b>{quoteBatchError}</b> : null}
+        </div>
+        <span className="industry-leader-directory-time">{loading ? <><LoaderCircle className="is-spinning" size={14} />正在同步名录</> : universe ? `名录更新于 ${formatClock(universe.refreshedAt)}` : "等待数据"}</span>
       </div>
       {error ? <div className="industry-leader-error"><CircleAlert size={16} />{error}</div> : null}
+      {quoteBatchError ? <div className="industry-leader-quote-error" role="status"><CircleAlert size={15} />{quoteBatchError}</div> : null}
+      <span className="sr-only" role="status" key={quoteAnnouncementRevision}>{quoteAnnouncement}</span>
 
       <div className={`industry-leader-comparison ${loading && !payload ? "is-loading" : ""} ${loading && payload ? "is-changing" : ""}`}>
         <section className="industry-market-pane is-china" aria-label="中国市场行业领航股" key={`china-${payload?.selectedSubIndustry || "loading"}`}>
@@ -373,11 +473,11 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
           <div className="industry-china-groups">
             <section>
               <h3><span>A 股</span><small>沪深北</small></h3>
-              <LeaderList stocks={payload?.leaders.cn || []} empty="暂无 A 股候选" loading={loading && !payload} />
+              <LeaderList stocks={payload?.leaders.cn || []} empty="暂无 A 股候选" loading={loading && !payload} now={quoteNow} healthBySymbol={quoteHealth} />
             </section>
             <section>
               <h3><span>港股</span><small>香港市场</small></h3>
-              <LeaderList stocks={payload?.leaders.hk || []} empty="暂无港股候选" loading={loading && !payload} />
+              <LeaderList stocks={payload?.leaders.hk || []} empty="暂无港股候选" loading={loading && !payload} now={quoteNow} healthBySymbol={quoteHealth} />
             </section>
           </div>
         </section>
@@ -419,7 +519,7 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
 
         <section className="industry-market-pane is-us" aria-label="美国市场行业领航股" key={`us-${payload?.selectedSubIndustry || "loading"}`}>
           <header><div><i /><strong>美国市场</strong></div><span>NASDAQ · NYSE</span></header>
-          <LeaderList stocks={payload?.leaders.us || []} empty="暂无美股候选" loading={loading && !payload} />
+          <LeaderList stocks={payload?.leaders.us || []} empty="暂无美股候选" loading={loading && !payload} now={quoteNow} healthBySymbol={quoteHealth} />
         </section>
       </div>
 

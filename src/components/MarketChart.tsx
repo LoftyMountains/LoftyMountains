@@ -187,7 +187,7 @@ export function MarketChart({ market, replaying }: MarketChartProps) {
 
       <div className="chart-footer">
         <span><Clock3 size={13} />{market?.updatedAt && market.updatedAt !== new Date(0).toISOString() ? `更新于 ${formatFull(market.updatedAt)}` : "等待首次更新"}</span>
-        <span title={market?.switchReason || undefined}>数据源：{market?.sourceLabel || "行情聚合"}{market?.latencyMs === null || market?.latencyMs === undefined ? "" : ` · ${market.latencyMs}ms`} · 交易数据或有延迟</span>
+        <span className="chart-source-disclosure">数据源：{market?.sourceLabel || "来源未提供（聚合快照）"}{market?.switchReason ? ` · 切换原因：${market.switchReason}` : ""}{market?.latencyMs === null || market?.latencyMs === undefined ? "" : ` · 延迟 ${market.latencyMs}ms`} · 交易数据或有延迟{replaying ? " · 回放范围见下方时间轴" : ""}</span>
       </div>
     </section>
   );

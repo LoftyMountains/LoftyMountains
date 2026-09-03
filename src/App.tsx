@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BootstrapPayload, FeedNewsItem, MarketSnapshot, ReplayPayload, SourceId, SourceStatus } from "../shared/types";
+import { NEWS_QUERY_MAX_LIMIT, type BootstrapPayload, type FeedNewsItem, type MarketSnapshot, type SourceId, type SourceStatus } from "../shared/types";
 import { Header } from "./components/Header";
 import { MarketChart } from "./components/MarketChart";
 import { NewsFeed, type FeedViewMode, type ViewMode } from "./components/NewsFeed";
@@ -7,8 +7,21 @@ import { QueryPanel } from "./components/QueryPanel";
 import { ReplayBar } from "./components/ReplayBar";
 import { apiUrl } from "./lib/api";
 import { groupNewsEvents } from "./lib/news-events";
+import { parseNewsQueryResponse, type NewsQueryCompleteness } from "./lib/news-query";
+import {
+  DEFAULT_REPLAY_SPEED,
+  clampReplayCursor,
+  isReplaySpeed,
+  parseReplayResponse,
+  replayCursorFromElapsed,
+  replaySpeedLabel,
+  visibleReplayItemCount,
+  type ReplaySpeed,
+  type ValidatedReplay,
+} from "./lib/replay-clock";
 import { applyThemeMode, readThemeMode, type ThemeMode } from "./lib/theme";
-import { fromBeijingInput, toBeijingInput } from "./lib/time";
+import { formatFull, fromBeijingInput, toBeijingInput } from "./lib/time";
+import { latestTrustedTimestamp } from "./lib/live-freshness";
 
 function uniqueNews(items: FeedNewsItem[]) {
   const seen = new Set<string>();
@@ -19,6 +32,48 @@ const liveNewsSyncIntervalMs = 4_000;
 const liveNewsOverlapMs = 3 * 60_000;
 const streamStaleMs = 35_000;
 const streamClientStorageKey = "jingxing-stream-client";
+
+interface HistoryQueryState {
+  items: FeedNewsItem[];
+  completeness: NewsQueryCompleteness | null;
+  revision: number;
+}
+
+interface ReplaySession {
+  generation: number;
+  replay: ValidatedReplay;
+  cursorMs: number;
+  playing: boolean;
+  announcement: string;
+  announcementRevision: number;
+}
+
+interface ReplayAnchor {
+  generation: number;
+  cursorMs: number;
+  monotonicMs: number;
+  speed: ReplaySpeed;
+}
+
+function replayCursorAt(session: ReplaySession, anchor: ReplayAnchor | null, monotonicMs: number) {
+  if (!anchor || anchor.generation !== session.generation || !session.playing) return session.cursorMs;
+  return replayCursorFromElapsed(
+    anchor.cursorMs,
+    monotonicMs - anchor.monotonicMs,
+    anchor.speed,
+    session.replay.fromMs,
+    session.replay.toMs,
+  );
+}
+
+function replayAnnouncement(action: string, cursorMs: number) {
+  return `${action}，北京时间 ${formatFull(cursorMs)}`;
+}
+
+function apiError(payload: unknown, fallback: string) {
+  if (typeof payload !== "object" || payload === null || !("error" in payload)) return fallback;
+  return typeof payload.error === "string" && payload.error.trim() ? payload.error : fallback;
+}
 
 function liveRecoveryFrom(latestPublishedAt: string | null) {
   if (!latestPublishedAt) return null;
@@ -54,10 +109,15 @@ function InsightsFallback() {
 
 export function App() {
   const [liveNews, setLiveNews] = useState<FeedNewsItem[]>([]);
-  const [historyNews, setHistoryNews] = useState<FeedNewsItem[]>([]);
+  const [historyQuery, setHistoryQuery] = useState<HistoryQueryState>({ items: [], completeness: null, revision: 0 });
   const [market, setMarket] = useState<MarketSnapshot | null>(null);
   const [sources, setSources] = useState<SourceStatus[]>([]);
   const [connected, setConnected] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState<"initializing" | "connected" | "reconnecting" | "error">("initializing");
+  const [realtimeError, setRealtimeError] = useState<string | null>(null);
+  const [retryingConnection, setRetryingConnection] = useState(false);
+  const [realtimeAnnouncement, setRealtimeAnnouncement] = useState("");
+  const [realtimeAnnouncementRevision, setRealtimeAnnouncementRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<ViewMode>("live");
   const [selectedSources, setSelectedSources] = useState<Set<SourceId>>(new Set());
@@ -67,10 +127,8 @@ export function App() {
   const [from, setFrom] = useState(() => toBeijingInput(new Date(Date.now() - 4 * 60 * 60 * 1000)));
   const [to, setTo] = useState(() => toBeijingInput(new Date()));
   const [query, setQuery] = useState("");
-  const [replay, setReplay] = useState<ReplayPayload | null>(null);
-  const [replayIndex, setReplayIndex] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(2);
+  const [replaySession, setReplaySession] = useState<ReplaySession | null>(null);
+  const [replaySpeed, setReplaySpeed] = useState<ReplaySpeed>(DEFAULT_REPLAY_SPEED);
   const [now, setNow] = useState(Date.now());
   const [theme, setTheme] = useState<ThemeMode>(readThemeMode);
   const [analysisRevision, setAnalysisRevision] = useState<string | null>(null);
@@ -80,6 +138,28 @@ export function App() {
   const liveNewsSyncController = useRef<AbortController | null>(null);
   const lastLiveNewsSyncAt = useRef(0);
   const streamClientId = useRef(createStreamClientId());
+  const queryOperation = useRef<AbortController | null>(null);
+  const replayGeneration = useRef(0);
+  const replayAnchor = useRef<ReplayAnchor | null>(null);
+  const retryConnectionRef = useRef<(() => Promise<void>) | null>(null);
+  const cancelRetryRef = useRef<(() => void) | null>(null);
+  const retryingConnectionRef = useRef(false);
+  const retryCancelledRef = useRef(false);
+  const retryGenerationRef = useRef(0);
+  const bootstrapReadyRef = useRef(false);
+  const bootstrapSettledRef = useRef(false);
+  const lastAnnouncementRef = useRef<string | null>(null);
+  const hadConnectedRef = useRef(false);
+  const connectedRef = useRef(false);
+  const marketRef = useRef<MarketSnapshot | null>(null);
+  const sourcesRef = useRef<SourceStatus[]>([]);
+
+  const announceRealtime = useCallback((message: string) => {
+    if (!message || lastAnnouncementRef.current === message) return;
+    lastAnnouncementRef.current = message;
+    setRealtimeAnnouncement(message);
+    setRealtimeAnnouncementRevision((value) => value + 1);
+  }, []);
 
   const mergeLiveNews = useCallback((incoming: FeedNewsItem[]) => {
     setLiveNews((current) => {
@@ -112,9 +192,10 @@ export function App() {
         cache: "no-cache",
         signal: controller.signal,
       });
-      if (!response.ok) return;
+      if (!response.ok) return false;
       const payload = await response.json() as { items: FeedNewsItem[] };
       mergeLiveNews(payload.items);
+      return true;
     } catch {
       // The stream watchdog or next foreground recovery retries missed items.
     } finally {
@@ -149,14 +230,42 @@ export function App() {
         mergeLiveNews(payload.news);
         setMarket(payload.market);
         setSources(payload.sources);
+        marketRef.current = payload.market;
+        sourcesRef.current = payload.sources;
+        bootstrapReadyRef.current = true;
+        setRealtimeStatus("initializing");
       })
-      .catch((error) => setQueryError(error instanceof Error ? error.message : "初始化失败"))
-      .finally(() => !cancelled && setLoading(false));
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "初始化失败";
+        setQueryError(message);
+        setRealtimeError(message);
+        bootstrapReadyRef.current = false;
+        setRealtimeStatus("error");
+        announceRealtime(message);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        bootstrapSettledRef.current = true;
+        setLoading(false);
+        if (bootstrapReadyRef.current) connectStream();
+      });
 
     const markStreamActive = (source: EventSource) => {
-      if (events !== source) return false;
+      if (events !== source || !bootstrapReadyRef.current) return false;
       lastStreamActivityAt = Date.now();
       setConnected(true);
+      const recovered = hadConnectedRef.current && !connectedRef.current;
+      connectedRef.current = true;
+      hadConnectedRef.current = true;
+      setRealtimeStatus("connected");
+      setRealtimeError(null);
+      if (recovered) {
+        const latest = latestTrustedTimestamp([
+          marketRef.current?.lastSuccessAt,
+          ...sourcesRef.current.map((source) => source.lastSuccessAt),
+        ]);
+        announceRealtime(`实时连接已恢复${latest ? `，数据截至北京时间 ${formatFull(latest)}` : ""}`);
+      }
       return true;
     };
 
@@ -177,11 +286,13 @@ export function App() {
     };
 
     const connectStream = (force = false) => {
-      if (cancelled) return;
+      if (cancelled || !bootstrapSettledRef.current || !bootstrapReadyRef.current) return;
       if (!force && events && events.readyState !== EventSource.CLOSED) return;
       if (force) clearReconnectTimer();
       events?.close();
       setConnected(false);
+      connectedRef.current = false;
+      setRealtimeStatus("reconnecting");
       lastStreamActivityAt = Date.now();
       const streamUrl = new URL(apiUrl("/api/stream"), window.location.href);
       streamUrl.searchParams.set("client", streamClientId.current);
@@ -201,6 +312,9 @@ export function App() {
         nextEvents.close();
         events = null;
         setConnected(false);
+        connectedRef.current = false;
+        setRealtimeStatus("reconnecting");
+        if (!retryingConnectionRef.current) announceRealtime("实时连接中断，正在重连");
         const recoveryAt = Date.now();
         if (recoveryAt - lastRecoveryAt >= 1_000) {
           lastRecoveryAt = recoveryAt;
@@ -219,11 +333,15 @@ export function App() {
       });
       nextEvents.addEventListener("market", (event) => {
         if (!markStreamActive(nextEvents)) return;
-        setMarket(JSON.parse((event as MessageEvent<string>).data) as MarketSnapshot);
+        const nextMarket = JSON.parse((event as MessageEvent<string>).data) as MarketSnapshot;
+        marketRef.current = nextMarket;
+        setMarket(nextMarket);
       });
       nextEvents.addEventListener("sources", (event) => {
         if (!markStreamActive(nextEvents)) return;
-        setSources(JSON.parse((event as MessageEvent<string>).data) as SourceStatus[]);
+        const nextSources = JSON.parse((event as MessageEvent<string>).data) as SourceStatus[];
+        sourcesRef.current = nextSources;
+        setSources(nextSources);
       });
       nextEvents.addEventListener("analysis", (event) => {
         if (!markStreamActive(nextEvents)) return;
@@ -232,7 +350,43 @@ export function App() {
       });
     };
 
-    connectStream();
+    retryConnectionRef.current = async () => {
+      if (cancelled || retryingConnectionRef.current) return;
+      retryingConnectionRef.current = true;
+      const retryGeneration = ++retryGenerationRef.current;
+      retryCancelledRef.current = false;
+      // A failed bootstrap still allows the user to recover the stream and
+      // any available domains; the retry path is the explicit initialization
+      // recovery boundary.
+      bootstrapReadyRef.current = true;
+      setRetryingConnection(true);
+      setRealtimeStatus("reconnecting");
+      setRealtimeError(null);
+      announceRealtime("正在重连");
+      const synced = await syncLiveNews(true);
+      if (cancelled || retryGeneration !== retryGenerationRef.current || retryCancelledRef.current) return;
+      connectStream(true);
+      if (!synced) {
+        const message = "重试连接失败，请稍后再次重试";
+        setRealtimeError(message);
+        setRealtimeStatus("error");
+        announceRealtime(message);
+      }
+      retryingConnectionRef.current = false;
+      setRetryingConnection(false);
+    };
+    cancelRetryRef.current = () => {
+      if (!retryingConnectionRef.current) return;
+      retryCancelledRef.current = true;
+      retryGenerationRef.current += 1;
+      liveNewsSyncController.current?.abort();
+      retryingConnectionRef.current = false;
+      setRetryingConnection(false);
+      setRealtimeStatus("error");
+      const message = "已取消重试，可再次重试连接";
+      setRealtimeError(message);
+      announceRealtime(message);
+    };
 
     const recoverLiveConnection = () => {
       if (document.visibilityState !== "visible") return;
@@ -270,45 +424,123 @@ export function App() {
       liveNewsSyncController.current?.abort();
       liveNewsSyncController.current = null;
       events?.close();
+      retryConnectionRef.current = null;
+      cancelRetryRef.current = null;
     };
-  }, [mergeLiveNews, syncLiveNews]);
-
-  const replayTimeline = useMemo(() => {
-    if (!replay) return [];
-    return Array.from(new Set([
-      ...replay.news.map((item) => item.publishedAt),
-      ...replay.market.points.map((point) => point.timestamp),
-    ])).sort();
-  }, [replay]);
+  }, [announceRealtime, mergeLiveNews, syncLiveNews]);
 
   useEffect(() => {
-    if (mode !== "replay" || !playing || replayTimeline.length < 2) return;
+    if (mode !== "replay" || !replaySession?.playing) {
+      replayAnchor.current = null;
+      return;
+    }
+    const anchor: ReplayAnchor = {
+      generation: replaySession.generation,
+      cursorMs: replaySession.cursorMs,
+      monotonicMs: performance.now(),
+      speed: replaySpeed,
+    };
+    replayAnchor.current = anchor;
     const timer = window.setInterval(() => {
-      setReplayIndex((current) => {
-        if (current >= replayTimeline.length - 1) {
-          setPlaying(false);
-          return current;
+      const monotonicMs = performance.now();
+      setReplaySession((current) => {
+        if (!current || !current.playing || current.generation !== anchor.generation) return current;
+        const cursorMs = replayCursorAt(current, anchor, monotonicMs);
+        if (cursorMs >= current.replay.toMs) {
+          if (replayAnchor.current === anchor) replayAnchor.current = null;
+          return {
+            ...current,
+            cursorMs: current.replay.toMs,
+            playing: false,
+            announcement: "回放结束",
+            announcementRevision: current.announcementRevision + 1,
+          };
         }
-        return current + 1;
+        return cursorMs === current.cursorMs ? current : { ...current, cursorMs };
       });
-    }, Math.max(90, 900 / speed));
-    return () => window.clearInterval(timer);
-  }, [mode, playing, replayTimeline.length, speed]);
+    }, 100);
+    return () => {
+      window.clearInterval(timer);
+      if (replayAnchor.current === anchor) replayAnchor.current = null;
+    };
+  }, [mode, replaySession?.generation, replaySession?.playing, replaySpeed]);
 
-  const replayTime = replayTimeline[replayIndex];
+  useEffect(() => {
+    const pauseInBackground = () => {
+      const anchor = replayAnchor.current;
+      const monotonicMs = performance.now();
+      replayAnchor.current = null;
+      setReplaySession((current) => {
+        if (!current?.playing) return current;
+        const cursorMs = replayCursorAt(current, anchor, monotonicMs);
+        const ended = cursorMs >= current.replay.toMs;
+        return {
+          ...current,
+          cursorMs: ended ? current.replay.toMs : cursorMs,
+          playing: false,
+          announcement: ended ? "回放结束" : replayAnnouncement("页面进入后台，回放已暂停", cursorMs),
+          announcementRevision: current.announcementRevision + 1,
+        };
+      });
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") pauseInBackground();
+    };
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) pauseInBackground();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", pauseInBackground);
+    window.addEventListener("pageshow", handlePageShow);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", pauseInBackground);
+      window.removeEventListener("pageshow", handlePageShow);
+      replayAnchor.current = null;
+    };
+  }, []);
+
+  useEffect(() => () => {
+    queryOperation.current?.abort();
+    queryOperation.current = null;
+  }, []);
+
+  const replayTime = replaySession ? new Date(replaySession.cursorMs).toISOString() : undefined;
   const replayNews = useMemo(() => {
-    if (!replay || !replayTime) return [];
-    return replay.news.filter((item) => item.publishedAt <= replayTime).reverse();
-  }, [replay, replayTime]);
+    if (!replaySession) return [];
+    const count = visibleReplayItemCount(replaySession.replay.newsTimes, replaySession.cursorMs);
+    return replaySession.replay.payload.news.slice(0, count).reverse();
+  }, [replaySession]);
   const replayMarket = useMemo<MarketSnapshot | null>(() => {
-    if (!replay || !replayTime) return null;
-    return { ...replay.market, points: replay.market.points.filter((point) => point.timestamp <= replayTime) };
-  }, [replay, replayTime]);
+    if (!replaySession) return null;
+    const count = visibleReplayItemCount(replaySession.replay.marketTimes, replaySession.cursorMs);
+    const points = replaySession.replay.payload.market.points.slice(0, count);
+    const latestTimestamp = points.at(-1)?.timestamp;
+    return {
+      ...replaySession.replay.payload.market,
+      points,
+      updatedAt: latestTimestamp || new Date(0).toISOString(),
+      lastSuccessAt: latestTimestamp || null,
+    };
+  }, [replaySession]);
 
-  const rawItems = mode === "live" ? liveNews : mode === "history" ? historyNews : replayNews;
+  const rawItems = mode === "live" ? liveNews : mode === "history" ? historyQuery.items : replayNews;
   const visibleItems = useMemo(() => rawItems.filter((item) => selectedSources.size === 0 || selectedSources.has(item.source)), [rawItems, selectedSources]);
   const visibleEvents = useMemo(() => groupNewsEvents(visibleItems), [visibleItems]);
   const visibleMarket = mode === "replay" ? replayMarket : market;
+  const latestMarketSuccessAt = latestTrustedTimestamp([market?.lastSuccessAt], now);
+  const affected = sources.filter((source) => source.state === "delayed" || source.state === "offline");
+  const marketAffected = Boolean(market?.delayed || (market && !latestMarketSuccessAt));
+  const freshnessLabel = realtimeStatus === "initializing"
+    ? "正在连接"
+    : realtimeStatus === "connected"
+      ? affected.length || marketAffected ? "部分数据源异常，数据可能陈旧" : "实时连接正常"
+      : realtimeStatus === "error" ? "实时连接失败，数据可能陈旧" : "实时连接中断，正在重连；数据可能陈旧";
+  const freshnessDetails = [
+    "新闻最近成功时间未知",
+    `行情最近成功时间${latestMarketSuccessAt ? `北京时间 ${formatFull(latestMarketSuccessAt)}` : "未知"}`,
+    ...affected.map((source) => `${source.label}${source.state === "offline" ? "离线" : "延迟"}，最近成功时间${latestTrustedTimestamp([source.lastSuccessAt], now) ? `北京时间 ${formatFull(latestTrustedTimestamp([source.lastSuccessAt], now)!)}` : "未知"}${source.message ? `：${source.message}` : ""}`),
+  ];
 
   function toggleSource(source: SourceId) {
     setSelectedSources((current) => {
@@ -331,53 +563,162 @@ export function App() {
     }
   }
 
+  function pauseReplay(action = "回放已暂停") {
+    const anchor = replayAnchor.current;
+    const monotonicMs = performance.now();
+    replayAnchor.current = null;
+    setReplaySession((current) => {
+      if (!current?.playing) return current;
+      const cursorMs = replayCursorAt(current, anchor, monotonicMs);
+      const ended = cursorMs >= current.replay.toMs;
+      return {
+        ...current,
+        cursorMs: ended ? current.replay.toMs : cursorMs,
+        playing: false,
+        announcement: ended ? "回放结束" : replayAnnouncement(action, cursorMs),
+        announcementRevision: current.announcementRevision + 1,
+      };
+    });
+  }
+
+  function changeReplayPlaying(playing: boolean) {
+    if (!playing) {
+      pauseReplay();
+      return;
+    }
+    replayAnchor.current = null;
+    setReplaySession((current) => {
+      if (!current) return current;
+      const restarting = current.cursorMs >= current.replay.toMs;
+      const cursorMs = restarting ? current.replay.fromMs : current.cursorMs;
+      return {
+        ...current,
+        cursorMs,
+        playing: true,
+        announcement: replayAnnouncement(restarting ? "重新播放" : "开始播放", cursorMs),
+        announcementRevision: current.announcementRevision + 1,
+      };
+    });
+  }
+
+  function changeReplayCursor(cursorMs: number, announce: boolean) {
+    replayAnchor.current = null;
+    setReplaySession((current) => {
+      if (!current) return current;
+      const nextCursorMs = clampReplayCursor(cursorMs, current.replay.fromMs, current.replay.toMs);
+      const ended = nextCursorMs >= current.replay.toMs;
+      return {
+        ...current,
+        cursorMs: nextCursorMs,
+        playing: false,
+        ...(announce ? {
+          announcement: ended ? "回放结束" : replayAnnouncement("已跳转", nextCursorMs),
+          announcementRevision: current.announcementRevision + 1,
+        } : {}),
+      };
+    });
+  }
+
+  function changeReplaySpeed(value: number) {
+    if (!isReplaySpeed(value)) return;
+    const anchor = replayAnchor.current;
+    const monotonicMs = performance.now();
+    replayAnchor.current = null;
+    setReplaySession((current) => {
+      if (!current) return current;
+      const cursorMs = replayCursorAt(current, anchor, monotonicMs);
+      const ended = cursorMs >= current.replay.toMs;
+      return {
+        ...current,
+        cursorMs: ended ? current.replay.toMs : cursorMs,
+        playing: ended ? false : current.playing,
+        announcement: ended ? "回放结束" : `回放速率已设为 ${replaySpeedLabel(value)}`,
+        announcementRevision: current.announcementRevision + 1,
+      };
+    });
+    setReplaySpeed(value);
+  }
+
   async function runSearch() {
+    if (queryOperation.current) return;
     const range = validateRange();
     if (!range) return;
+    const controller = new AbortController();
+    pauseReplay();
+    queryOperation.current = controller;
     setQueryBusy(true);
     setQueryError(null);
     try {
-      const params = new URLSearchParams({ from: range.start, to: range.end, limit: "1000", remote: "1" });
+      const params = new URLSearchParams({ from: range.start, to: range.end, limit: String(NEWS_QUERY_MAX_LIMIT), remote: "1" });
       if (query.trim()) params.set("q", query.trim());
-      const response = await fetch(`${apiUrl("/api/news")}?${params}`);
-      if (!response.ok) throw new Error("查询失败");
-      const payload = await response.json() as { items: FeedNewsItem[] };
-      setHistoryNews(payload.items);
+      const response = await fetch(`${apiUrl("/api/news")}?${params}`, { signal: controller.signal });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(apiError(payload, "查询失败"));
+      const parsed = parseNewsQueryResponse(payload);
+      setHistoryQuery((current) => ({
+        items: parsed.items,
+        completeness: parsed.completeness,
+        revision: current.revision + 1,
+      }));
       setMode("history");
       setQueryOpen(false);
     } catch (error) {
       setQueryError(error instanceof Error ? error.message : "查询失败");
     } finally {
-      setQueryBusy(false);
+      if (queryOperation.current === controller) {
+        queryOperation.current = null;
+        setQueryBusy(false);
+      }
     }
   }
 
   async function runReplay() {
+    if (queryOperation.current) return;
     const range = validateRange();
     if (!range) return;
+    const controller = new AbortController();
+    pauseReplay();
+    queryOperation.current = controller;
     setQueryBusy(true);
     setQueryError(null);
     try {
-      const response = await fetch(`${apiUrl("/api/replay")}?${new URLSearchParams({ from: range.start, to: range.end })}`);
-      const payload = await response.json() as ReplayPayload & { error?: string };
-      if (!response.ok) throw new Error(payload.error || "回放加载失败");
-      if (!payload.news.length && !payload.market.points.length) throw new Error("该时间段尚无可回放数据");
-      setReplay(payload);
-      setReplayIndex(0);
+      const response = await fetch(`${apiUrl("/api/replay")}?${new URLSearchParams({ from: range.start, to: range.end })}`, { signal: controller.signal });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(apiError(payload, "回放加载失败"));
+      const parsed = parseReplayResponse(payload);
+      if (!parsed.payload.news.length && !parsed.payload.market.points.length) throw new Error("该时间段尚无可回放数据");
+      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+      const generation = replayGeneration.current + 1;
+      replayGeneration.current = generation;
+      replayAnchor.current = null;
+      setReplaySpeed(DEFAULT_REPLAY_SPEED);
+      setReplaySession({
+        generation,
+        replay: parsed,
+        cursorMs: parsed.fromMs,
+        playing: !reducedMotion,
+        announcement: reducedMotion
+          ? replayAnnouncement("回放已加载并暂停", parsed.fromMs)
+          : replayAnnouncement("开始播放", parsed.fromMs),
+        announcementRevision: 1,
+      });
       setMode("replay");
-      setPlaying(true);
       setQueryOpen(false);
     } catch (error) {
       setQueryError(error instanceof Error ? error.message : "回放加载失败");
     } finally {
-      setQueryBusy(false);
+      if (queryOperation.current === controller) {
+        queryOperation.current = null;
+        setQueryBusy(false);
+      }
     }
   }
 
   function returnLive() {
+    replayAnchor.current = null;
     setMode("live");
-    setPlaying(false);
-    setReplay(null);
+    setHistoryQuery({ items: [], completeness: null, revision: 0 });
+    setReplaySession(null);
   }
 
   return (
@@ -391,6 +732,23 @@ export function App() {
         onInsightsClick={() => setWorkspaceView((current) => current === "live" ? "insights" : "live")}
         onThemeChange={setTheme}
       />
+      {mode === "live" ? (
+        <div className={`realtime-freshness is-${realtimeStatus}`} aria-busy={retryingConnection}>
+          <span className="realtime-freshness-dot" aria-hidden="true" />
+          <span className="realtime-freshness-copy">
+            <strong>{freshnessLabel}</strong>
+            <span>{freshnessDetails.join("；")}</span>
+          </span>
+          {realtimeError ? <span className="realtime-freshness-error" role="alert">{realtimeError}</span> : null}
+          {realtimeStatus !== "connected" || affected.length || marketAffected ? (
+            <button type="button" className="realtime-retry" disabled={retryingConnection} onClick={() => void retryConnectionRef.current?.()}>
+              {retryingConnection ? "正在重连" : "重试连接"}
+            </button>
+          ) : null}
+          {retryingConnection ? <button type="button" className="realtime-retry realtime-cancel" onClick={() => cancelRetryRef.current?.()}>取消重试</button> : null}
+          <span className="sr-only" role="status" key={realtimeAnnouncementRevision}>{realtimeAnnouncement}</span>
+        </div>
+      ) : null}
       <div className="workspace-scroll">
         {workspaceView === "live" ? (
           <div className="workspace-page">
@@ -403,9 +761,15 @@ export function App() {
                 sources={sources}
                 selectedSources={selectedSources}
                 now={now}
+                replayCursorMs={mode === "replay" && replaySession ? replaySession.cursorMs : undefined}
+                replayPlaying={mode === "replay" && replaySession ? replaySession.playing : false}
+                replayEnded={mode === "replay" && replaySession ? replaySession.cursorMs >= replaySession.replay.toMs : false}
                 loading={loading}
                 error={mode === "live" && !liveNews.length ? queryError : null}
                 replayTime={replayTime}
+                historyCompleteness={historyQuery.completeness}
+                historyCompletenessRevision={historyQuery.revision}
+                historyReturnedCount={historyQuery.items.length}
                 onModeLive={returnLive}
                 onFeedViewChange={setFeedView}
                 onToggleSource={toggleSource}
@@ -414,16 +778,19 @@ export function App() {
               />
               <div className="market-column">
                 <MarketChart market={visibleMarket} replaying={mode === "replay"} />
-                {mode === "replay" ? (
+                {mode === "replay" && replaySession ? (
                   <ReplayBar
-                    current={replayIndex}
-                    total={replayTimeline.length}
-                    timestamp={replayTime}
-                    playing={playing}
-                    speed={speed}
-                    onPlayingChange={setPlaying}
-                    onCurrentChange={(value) => { setReplayIndex(value); setPlaying(false); }}
-                    onSpeedChange={setSpeed}
+                    fromMs={replaySession.replay.fromMs}
+                    toMs={replaySession.replay.toMs}
+                    cursorMs={replaySession.cursorMs}
+                    playing={replaySession.playing}
+                    speed={replaySpeed}
+                    announcement={replaySession.announcement}
+                    announcementRevision={replaySession.announcementRevision}
+                    onPlayingChange={changeReplayPlaying}
+                    onCursorChange={(value) => changeReplayCursor(value, false)}
+                    onCursorCommit={(value) => changeReplayCursor(value, true)}
+                    onSpeedChange={changeReplaySpeed}
                     onClose={returnLive}
                   />
                 ) : null}
