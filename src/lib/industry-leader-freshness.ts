@@ -92,9 +92,14 @@ export function markLeaderQuoteBatchFailure(
 
 export function quoteFreshnessLabel(state: LeaderQuoteFreshness) {
   switch (state) {
-    case "live": return "实时";
+    // This is a public-provider freshness window, not an exchange-grade SLA.
+    // Keep the qualifier in the row label so the source caveat is visible
+    // even when the footer is below the fold.
+    case "live": return "公开行情·实时";
     case "delayed": return "延迟/可能陈旧";
-    case "closed": return "收盘";
+    // Session detection is based on a fixed regular-hours calendar; it does
+    // not include exchange holidays, ad-hoc halts or half-day sessions.
+    case "closed": return "常规时段外";
     case "error": return "更新失败/可能陈旧";
     case "unavailable": return "行情不可用";
     default: return "更新时间未知";

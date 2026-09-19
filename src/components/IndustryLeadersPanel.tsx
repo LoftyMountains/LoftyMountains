@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp, CircleAlert, DatabaseZap, LoaderCircle, PanelTo
 import type { IndustryCatalogEntry, IndustryLeaderLiveQuotesPayload, IndustryLeaderStock, IndustryLeadersPayload } from "../../shared/types";
 import { apiUrl } from "../lib/api";
 import { classifyLeaderQuote, markLeaderQuoteBatchFailure, mergeLeaderQuoteHealth, quoteFreshnessClass, quoteFreshnessLabel, trustedQuoteTimestamp, type LeaderQuoteFreshness, type LeaderQuoteHealth } from "../lib/industry-leader-freshness";
-import { formatClock, formatFull } from "../lib/time";
+import { formatFull } from "../lib/time";
 
 const payloadCache = new Map<string, { payload: IndustryLeadersPayload; etag: string | null; fetchedAt: number }>();
 const cacheMs = 60_000;
@@ -40,7 +40,7 @@ function LeaderRow({ stock, rank, now, health }: { stock: IndustryLeaderStock; r
   const quoteState = classifyLeaderQuote(stock.quote, now, health, stock.market);
   const quoteLabel = quoteFreshnessLabel(quoteState);
   const updatedAt = trustedQuoteTimestamp(stock.quote.updatedAt, now);
-  const quoteTime = updatedAt === null ? "更新时间未知" : `截至 ${formatClock(updatedAt)}`;
+  const quoteTime = updatedAt === null ? "更新时间未知" : `截至北京时间 ${formatFull(updatedAt)}`;
   const provider = stock.quote.provider || "来源未知";
   const reason = health?.failureReason || (health?.consecutiveFailures && health.consecutiveFailures >= 2 ? "行情更新失败，沿用最近报价" : stock.quote.reason);
   const quoteDescription = available
@@ -65,7 +65,7 @@ function LeaderRow({ stock, rank, now, health }: { stock: IndustryLeaderStock; r
           <em className={quoteFreshnessClass(quoteState)}><i />{quoteLabel}</em>
         </> : reason || "行情不可用"}</span>
         <small className="industry-leader-quote-facts">
-          <span>{quoteTime}</span>
+          {updatedAt === null ? <span>{quoteTime}</span> : <time dateTime={new Date(updatedAt).toISOString()}>{quoteTime}</time>}
           <span>{provider}</span>
         </small>
       </div>
@@ -278,6 +278,11 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value)}`;
+  const universeStatus = universe?.fallback
+    ? "名录降级：当前使用基础池"
+    : universe?.stale
+      ? `名录刷新失败，沿用北京时间 ${formatFull(universe.refreshedAt)} 快照`
+      : null;
 
   const quoteSummary = useMemo(() => {
     const stocks = Object.values(payload?.leaders || {}).flat();
@@ -293,9 +298,9 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
       counts[classifyLeaderQuote(stock.quote, quoteNow, quoteHealth[stock.symbol], stock.market)] += 1;
     });
     const parts = [
-      counts.live ? `${counts.live} 只实时` : "",
+      counts.live ? `${counts.live} 只公开行情实时` : "",
       counts.delayed ? `${counts.delayed} 只延迟` : "",
-      counts.closed ? `${counts.closed} 只收盘` : "",
+      counts.closed ? `${counts.closed} 只常规时段外` : "",
       counts.error ? `${counts.error} 只更新失败` : "",
       counts.unknown ? `${counts.unknown} 只状态未知` : "",
       counts.unavailable ? `${counts.unavailable} 只不可用` : "",
@@ -391,7 +396,7 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
             <span className="eyebrow">CROSS-MARKET INDUSTRY DIRECTORY</span>
             <h2 id="industry-leaders-catalog-title">标准子行业目录</h2>
             <small>{catalogCollapsed && activeEntry
-              ? `${activeEntry.sectorLabel} · ${activeEntry.label} · ${activeEntry.stockCount} 只候选股`
+              ? `${activeEntry.sectorLabel} · ${activeEntry.label} · ${activeEntry.stockCount} 只候选股${universeStatus ? ` · ${universeStatus}` : ""}`
               : universe
                 ? `完整名录 ${universe.listedCount.total.toLocaleString("zh-CN")} 只 · 合格入池 ${universe.eligibleCount.total.toLocaleString("zh-CN")} 只 · ${payload?.catalog.length || 0} 个子行业`
               : "正在同步三地证券名录"}</small>
@@ -457,11 +462,10 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
           <strong>{payload?.selectedSubIndustryLabel || "子行业对照"}</strong>
           {activeEntry ? <span>{activeEntry.sectorLabel} · {activeEntry.stockCount} 只候选股 · {activeEntry.marketCount} 个市场 · {activeEntry.eventCount} 个近期事件</span> : null}
         </div>
-        <div className="industry-leader-quote-summary" aria-label={`行情状态：${quoteSummary.label}`}>
+        <div className="industry-leader-quote-summary" aria-label={`行情状态：${quoteSummary.label}${quoteBatchError ? `，${quoteBatchError}` : ""}`}>
           {quotePolling ? <><LoaderCircle className="is-spinning" size={14} />正在更新行情</> : <span>{quoteSummary.label}</span>}
-          {quoteBatchError ? <b>{quoteBatchError}</b> : null}
         </div>
-        <span className="industry-leader-directory-time">{loading ? <><LoaderCircle className="is-spinning" size={14} />正在同步名录</> : universe ? `名录更新于 ${formatClock(universe.refreshedAt)}` : "等待数据"}</span>
+        <span className="industry-leader-directory-time">{loading ? <><LoaderCircle className="is-spinning" size={14} />正在同步名录</> : universe ? `名录更新于北京时间 ${formatFull(universe.refreshedAt)}` : "等待数据"}</span>
       </div>
       {error ? <div className="industry-leader-error"><CircleAlert size={16} />{error}</div> : null}
       {quoteBatchError ? <div className="industry-leader-quote-error" role="status"><CircleAlert size={15} />{quoteBatchError}</div> : null}
@@ -527,7 +531,7 @@ export function IndustryLeadersPanel({ hours, revision }: { hours: number; revis
         <span>{universe
           ? `入池口径：主上市活跃普通股；市值 A/H ${compactUsd(universe.criteria.minMarketCapUsd.cn)}、美股 ${compactUsd(universe.criteria.minMarketCapUsd.us)} 起；30 日平均成交额 A/H ${compactUsd(universe.criteria.minTradedValueUsd.cn)}、美股 ${compactUsd(universe.criteria.minTradedValueUsd.us)} 起`
           : "入池口径：上市状态、主上市普通股、市值、30 日平均成交额和标准行业齐备"}</span>
-        <span title={universe ? `${formatFull(universe.refreshedAt)} · 公司级产品来自公开资料并经景行规范化，缺失时使用标准子行业` : undefined}>数据源 {payload?.provider || "TradingView 公共市场扫描"} · 主要产品缺失时使用标准子行业</span>
+        <span title={universe ? `${formatFull(universe.refreshedAt)} · 公司级产品来自公开资料并经景行规范化，缺失时使用标准子行业` : undefined}>股票池：{payload?.provider?.split(" · ")[0] || "TradingView 公共市场扫描"}（快照） · 报价：腾讯公开行情，失败回退东方财富公开行情 · 产品：公开资料/景行标准产品库 · 公开源可能延迟；“公开行情·实时”仅表示供应商时间在约 3 分钟内，不代表交易所级实时</span>
       </footer>
     </section>
   );

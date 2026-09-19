@@ -1,4 +1,4 @@
-import { ChartNoAxesCombined, Github, Monitor, Moon, Newspaper, Sun } from "lucide-react";
+import { ChartNoAxesCombined, Globe2, Github, Monitor, Moon, Newspaper, Sun } from "lucide-react";
 import type { SourceStatus } from "../../shared/types";
 import type { ThemeMode } from "../lib/theme";
 import { formatClock, formatDay } from "../lib/time";
@@ -8,8 +8,8 @@ interface HeaderProps {
   serverTime: string;
   sources: SourceStatus[];
   theme: ThemeMode;
-  insightsActive: boolean;
-  onInsightsClick: () => void;
+  activeView: "live" | "insights" | "situation";
+  onViewChange: (view: "live" | "insights" | "situation") => void;
   onThemeChange: (theme: ThemeMode) => void;
 }
 
@@ -19,7 +19,7 @@ const themeOptions = [
   { mode: "system" as const, label: "跟随系统", icon: Monitor },
 ];
 
-export function Header({ connected, serverTime, sources, theme, insightsActive, onInsightsClick, onThemeChange }: HeaderProps) {
+export function Header({ connected, serverTime, sources, theme, activeView, onViewChange, onThemeChange }: HeaderProps) {
   const liveCount = sources.filter((source) => source.state === "live").length;
   return (
     <header className="topbar">
@@ -32,13 +32,17 @@ export function Header({ connected, serverTime, sources, theme, insightsActive, 
       </div>
 
       <nav className="workspace-switcher" aria-label="主要视图">
-        <button type="button" className={!insightsActive ? "is-active" : ""} aria-label="实时快讯" aria-current={!insightsActive ? "page" : undefined} onClick={() => insightsActive && onInsightsClick()}>
+        <button type="button" className={activeView === "live" ? "is-active" : ""} aria-label="实时快讯" aria-current={activeView === "live" ? "page" : undefined} onClick={() => onViewChange("live")}>
           <Newspaper size={15} />
           <span>快讯</span>
         </button>
-        <button type="button" className={insightsActive ? "is-active" : ""} aria-label="市场洞察" aria-current={insightsActive ? "page" : undefined} onClick={() => !insightsActive && onInsightsClick()}>
+        <button type="button" className={activeView === "insights" ? "is-active" : ""} aria-label="市场洞察" aria-current={activeView === "insights" ? "page" : undefined} onClick={() => onViewChange("insights")}>
           <ChartNoAxesCombined size={15} />
           <span>洞察</span>
+        </button>
+        <button type="button" className={activeView === "situation" ? "is-active" : ""} aria-label="全球态势" aria-current={activeView === "situation" ? "page" : undefined} onClick={() => onViewChange("situation")}>
+          <Globe2 size={15} />
+          <span>态势</span>
         </button>
       </nav>
 

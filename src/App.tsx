@@ -96,6 +96,8 @@ function createStreamClientId() {
 
 const InsightsDashboard = lazy(() => import("./components/InsightsDashboard").then((module) => ({ default: module.InsightsDashboard })));
 
+const GlobalSituationMap = lazy(() => import("./components/GlobalSituationMap").then((module) => ({ default: module.GlobalSituationMap })));
+
 function InsightsFallback() {
   return (
     <section id="market-insights" className="insights-dashboard" aria-busy="true">
@@ -103,6 +105,21 @@ function InsightsFallback() {
         <div><span className="eyebrow">MARKET INTELLIGENCE</span><h1>热点与股票关联</h1></div>
       </header>
       <div className="insights-workbench" />
+    </section>
+  );
+}
+
+function SituationFallback() {
+  return (
+    <section className="situation-page situation-page-fallback" aria-labelledby="situation-loading-title" aria-busy="true">
+      <div className="situation-topline">
+        <div className="situation-title-wrap">
+          <span className="situation-kicker">JINGXING GLOBAL PULSE</span>
+          <h1 id="situation-loading-title">全球态势</h1>
+          <p>正在准备地图画布与固定预览图层。</p>
+        </div>
+      </div>
+      <div className="situation-loading-skeleton" aria-hidden="true" />
     </section>
   );
 }
@@ -132,7 +149,7 @@ export function App() {
   const [now, setNow] = useState(Date.now());
   const [theme, setTheme] = useState<ThemeMode>(readThemeMode);
   const [analysisRevision, setAnalysisRevision] = useState<string | null>(null);
-  const [workspaceView, setWorkspaceView] = useState<"live" | "insights">("live");
+  const [workspaceView, setWorkspaceView] = useState<"live" | "insights" | "situation">("live");
   const [feedView, setFeedView] = useState<FeedViewMode>("events");
   const latestLiveNewsAt = useRef<string | null>(null);
   const liveNewsSyncController = useRef<AbortController | null>(null);
@@ -728,8 +745,8 @@ export function App() {
         serverTime={new Date(now).toISOString()}
         sources={sources}
         theme={theme}
-        insightsActive={workspaceView === "insights"}
-        onInsightsClick={() => setWorkspaceView((current) => current === "live" ? "insights" : "live")}
+        activeView={workspaceView}
+        onViewChange={setWorkspaceView}
         onThemeChange={setTheme}
       />
       {mode === "live" ? (
@@ -797,13 +814,19 @@ export function App() {
               </div>
             </main>
           </div>
-        ) : (
+        ) : workspaceView === "insights" ? (
           <div className="workspace-page">
             {!loading ? (
               <Suspense fallback={<InsightsFallback />}>
                 <InsightsDashboard revision={analysisRevision} />
               </Suspense>
             ) : <InsightsFallback />}
+          </div>
+        ) : (
+          <div className="workspace-page situation-workspace-page">
+            <Suspense fallback={<SituationFallback />}>
+              <GlobalSituationMap liveNews={liveNews} market={market} />
+            </Suspense>
           </div>
         )}
       </div>
