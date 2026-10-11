@@ -442,7 +442,7 @@ export function EconomicMap({ items, referencePoints, features, selectedFeatureI
     {overlays.length > 0 && <label className="map-overlay-selector">
       <span>Map objects <b>{overlays.length}</b></span>
       <select aria-label="Select a map object to view details" value={selectedFeatureId && overlayById.has(selectedFeatureId) ? selectedFeatureId : ""} onChange={(event) => { if (event.target.value) onSelectFeature(event.target.value); }}>
-        <option value="" disabled>Select an object for location and source</option>
+        <option value="" disabled>Select a map object</option>
         {(Object.keys(OVERLAY_LAYERS) as MapLayerId[]).map((layer) => {
           const layerItems = overlays.filter((overlay) => overlay.feature.properties.layer === layer);
           return layerItems.length > 0 && <optgroup key={layer} label={OVERLAY_LAYERS[layer].label}>{layerItems.map(({ feature }) => <option key={feature.id} value={feature.id}>{feature.properties.name} · {POSITION_LABELS[feature.properties.positionKind]}</option>)}</optgroup>;
