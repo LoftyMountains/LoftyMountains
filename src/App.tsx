@@ -1,837 +1,168 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NEWS_QUERY_MAX_LIMIT, type BootstrapPayload, type FeedNewsItem, type MarketSnapshot, type SourceId, type SourceStatus } from "../shared/types";
-import { Header } from "./components/Header";
-import { MarketChart } from "./components/MarketChart";
-import { NewsFeed, type FeedViewMode, type ViewMode } from "./components/NewsFeed";
-import { QueryPanel } from "./components/QueryPanel";
-import { ReplayBar } from "./components/ReplayBar";
-import { apiUrl } from "./lib/api";
-import { groupNewsEvents } from "./lib/news-events";
-import { parseNewsQueryResponse, type NewsQueryCompleteness } from "./lib/news-query";
-import {
-  DEFAULT_REPLAY_SPEED,
-  clampReplayCursor,
-  isReplaySpeed,
-  parseReplayResponse,
-  replayCursorFromElapsed,
-  replaySpeedLabel,
-  visibleReplayItemCount,
-  type ReplaySpeed,
-  type ValidatedReplay,
-} from "./lib/replay-clock";
-import { applyThemeMode, readThemeMode, type ThemeMode } from "./lib/theme";
-import { formatFull, fromBeijingInput, toBeijingInput } from "./lib/time";
-import { latestTrustedTimestamp } from "./lib/live-freshness";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Anchor, Building2, Check, ChevronDown, ChevronRight, CircleHelp, Crosshair, ExternalLink, Factory, Globe2, Landmark, Layers3, Map as MapIcon, MapPin, Newspaper, Radio, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Star, TrendingUp, Waves, X, Zap } from "lucide-react";
+import type { EconomicCategory, EconomicNewsItem, EconomicReferencePoint } from "../shared/types";
+import { useEconomicSnapshot } from "./hooks/useEconomicSnapshot";
+import { EconomicMarkets } from "./components/EconomicMarkets";
+import { formatClock, formatFull, relativeTime } from "./lib/time";
 
-function uniqueNews(items: FeedNewsItem[]) {
-  const seen = new Set<string>();
-  return items.filter((item) => !seen.has(item.id) && Boolean(seen.add(item.id)));
-}
+const EconomicMap = lazy(() => import("./components/EconomicMap").then((module) => ({ default: module.EconomicMap })));
+const categories = [
+  { id: "macro", label: "宏观经济", color: "#d6b779", icon: Globe2 },
+  { id: "monetary", label: "央行与货币", color: "#b09be9", icon: Landmark },
+  { id: "markets", label: "金融市场", color: "#78b6d4", icon: TrendingUp },
+  { id: "trade", label: "贸易与供应链", color: "#76bdaa", icon: Anchor },
+  { id: "energy", label: "能源与商品", color: "#d99c72", icon: Zap },
+  { id: "industry", label: "产业与公司", color: "#c292a4", icon: Factory },
+] as const;
+const referenceLayers = [
+  { id: "financial-center", label: "金融中心", icon: Building2 },
+  { id: "port", label: "主要港口", icon: Anchor },
+  { id: "chokepoint", label: "贸易通道", icon: Waves },
+] as const;
+const presets = [
+  { label: "全球", longitude: 70, latitude: 20, zoom: 2.1 },
+  { label: "亚洲", longitude: 110, latitude: 25, zoom: 2.4 },
+  { label: "欧洲", longitude: 15, latitude: 45, zoom: 2.55 },
+  { label: "美洲", longitude: -85, latitude: 20, zoom: 2.35 },
+];
+const sourceLabels: Record<string, string> = { live: "正常", polling: "采集中", delayed: "延迟", offline: "离线" };
+const precisionLabels = { country: "国家中心", region: "地区中心", city: "城市中心" };
+const categoryById = new Map(categories.map((category) => [category.id, category]));
 
-const liveNewsSyncIntervalMs = 4_000;
-const liveNewsOverlapMs = 3 * 60_000;
-const streamStaleMs = 35_000;
-const streamClientStorageKey = "jingxing-stream-client";
-
-interface HistoryQueryState {
-  items: FeedNewsItem[];
-  completeness: NewsQueryCompleteness | null;
-  revision: number;
-}
-
-interface ReplaySession {
-  generation: number;
-  replay: ValidatedReplay;
-  cursorMs: number;
-  playing: boolean;
-  announcement: string;
-  announcementRevision: number;
-}
-
-interface ReplayAnchor {
-  generation: number;
-  cursorMs: number;
-  monotonicMs: number;
-  speed: ReplaySpeed;
-}
-
-function replayCursorAt(session: ReplaySession, anchor: ReplayAnchor | null, monotonicMs: number) {
-  if (!anchor || anchor.generation !== session.generation || !session.playing) return session.cursorMs;
-  return replayCursorFromElapsed(
-    anchor.cursorMs,
-    monotonicMs - anchor.monotonicMs,
-    anchor.speed,
-    session.replay.fromMs,
-    session.replay.toMs,
-  );
-}
-
-function replayAnnouncement(action: string, cursorMs: number) {
-  return `${action}，北京时间 ${formatFull(cursorMs)}`;
-}
-
-function apiError(payload: unknown, fallback: string) {
-  if (typeof payload !== "object" || payload === null || !("error" in payload)) return fallback;
-  return typeof payload.error === "string" && payload.error.trim() ? payload.error : fallback;
-}
-
-function liveRecoveryFrom(latestPublishedAt: string | null) {
-  if (!latestPublishedAt) return null;
-  const latestTime = new Date(latestPublishedAt).getTime();
-  const cursorTime = Number.isFinite(latestTime) ? Math.min(latestTime, Date.now()) : Date.now();
-  return new Date(cursorTime - liveNewsOverlapMs).toISOString();
-}
-
-function createStreamClientId() {
-  try {
-    const existing = window.sessionStorage.getItem(streamClientStorageKey);
-    if (existing) return existing;
-    const generated = window.crypto.randomUUID?.() || `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-    window.sessionStorage.setItem(streamClientStorageKey, generated);
-    return generated;
-  } catch {
-    return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-  }
-}
-
-const InsightsDashboard = lazy(() => import("./components/InsightsDashboard").then((module) => ({ default: module.InsightsDashboard })));
-
-const GlobalSituationMap = lazy(() => import("./components/GlobalSituationMap").then((module) => ({ default: module.GlobalSituationMap })));
-
-function InsightsFallback() {
-  return (
-    <section id="market-insights" className="insights-dashboard" aria-busy="true">
-      <header className="insights-heading">
-        <div><span className="eyebrow">MARKET INTELLIGENCE</span><h1>热点与股票关联</h1></div>
-      </header>
-      <div className="insights-workbench" />
-    </section>
-  );
-}
-
-function SituationFallback() {
-  return (
-    <section className="situation-page situation-page-fallback" aria-labelledby="situation-loading-title" aria-busy="true">
-      <div className="situation-topline">
-        <div className="situation-title-wrap">
-          <span className="situation-kicker">JINGXING GLOBAL PULSE</span>
-          <h1 id="situation-loading-title">全球态势</h1>
-          <p>正在准备地图画布与固定预览图层。</p>
-        </div>
-      </div>
-      <div className="situation-loading-skeleton" aria-hidden="true" />
-    </section>
-  );
+function safeUrl(value: string | null | undefined) {
+  if (!value) return null;
+  try { const url = new URL(value); return ["https:", "http:"].includes(url.protocol) ? url.href : null; } catch { return null; }
 }
 
 export function App() {
-  const [liveNews, setLiveNews] = useState<FeedNewsItem[]>([]);
-  const [historyQuery, setHistoryQuery] = useState<HistoryQueryState>({ items: [], completeness: null, revision: 0 });
-  const [market, setMarket] = useState<MarketSnapshot | null>(null);
-  const [sources, setSources] = useState<SourceStatus[]>([]);
-  const [connected, setConnected] = useState(false);
-  const [realtimeStatus, setRealtimeStatus] = useState<"initializing" | "connected" | "reconnecting" | "error">("initializing");
-  const [realtimeError, setRealtimeError] = useState<string | null>(null);
-  const [retryingConnection, setRetryingConnection] = useState(false);
-  const [realtimeAnnouncement, setRealtimeAnnouncement] = useState("");
-  const [realtimeAnnouncementRevision, setRealtimeAnnouncementRevision] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<ViewMode>("live");
-  const [selectedSources, setSelectedSources] = useState<Set<SourceId>>(new Set());
-  const [queryOpen, setQueryOpen] = useState(false);
-  const [queryBusy, setQueryBusy] = useState(false);
-  const [queryError, setQueryError] = useState<string | null>(null);
-  const [from, setFrom] = useState(() => toBeijingInput(new Date(Date.now() - 4 * 60 * 60 * 1000)));
-  const [to, setTo] = useState(() => toBeijingInput(new Date()));
+  const [hours, setHours] = useState(24);
+  const { snapshot, snapshotHours, error, refreshing, refresh, revision } = useEconomicSnapshot(hours);
+  const [enabledCategories, setEnabledCategories] = useState<Set<EconomicCategory>>(() => new Set(categories.map((entry) => entry.id)));
+  const [enabledReferences, setEnabledReferences] = useState<Set<EconomicReferencePoint["kind"]>>(() => new Set(["financial-center", "port", "chokepoint"]));
   const [query, setQuery] = useState("");
-  const [replaySession, setReplaySession] = useState<ReplaySession | null>(null);
-  const [replaySpeed, setReplaySpeed] = useState<ReplaySpeed>(DEFAULT_REPLAY_SPEED);
+  const [source, setSource] = useState("all");
+  const [importantOnly, setImportantOnly] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [reference, setReference] = useState<EconomicReferencePoint | null>(null);
+  const [projection, setProjection] = useState<"globe" | "mercator">("globe");
+  const [focus, setFocus] = useState<{ longitude: number; latitude: number; zoom?: number; key: number } | null>(null);
+  const [preset, setPreset] = useState("全球");
+  const [mobilePanel, setMobilePanel] = useState<"map" | "feed" | "layers">("map");
+  const [sourcesOpen, setSourcesOpen] = useState(true);
+  const [layersOpen, setLayersOpen] = useState(true);
+  const [feedOpen, setFeedOpen] = useState(true);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const [theme, setTheme] = useState<ThemeMode>(readThemeMode);
-  const [analysisRevision, setAnalysisRevision] = useState<string | null>(null);
-  const [workspaceView, setWorkspaceView] = useState<"live" | "insights" | "situation">("live");
-  const [feedView, setFeedView] = useState<FeedViewMode>("events");
-  const latestLiveNewsAt = useRef<string | null>(null);
-  const liveNewsSyncController = useRef<AbortController | null>(null);
-  const lastLiveNewsSyncAt = useRef(0);
-  const streamClientId = useRef(createStreamClientId());
-  const queryOperation = useRef<AbortController | null>(null);
-  const replayGeneration = useRef(0);
-  const replayAnchor = useRef<ReplayAnchor | null>(null);
-  const retryConnectionRef = useRef<(() => Promise<void>) | null>(null);
-  const cancelRetryRef = useRef<(() => void) | null>(null);
-  const retryingConnectionRef = useRef(false);
-  const retryCancelledRef = useRef(false);
-  const retryGenerationRef = useRef(0);
-  const bootstrapReadyRef = useRef(false);
-  const bootstrapSettledRef = useRef(false);
-  const lastAnnouncementRef = useRef<string | null>(null);
-  const hadConnectedRef = useRef(false);
-  const connectedRef = useRef(false);
-  const marketRef = useRef<MarketSnapshot | null>(null);
-  const sourcesRef = useRef<SourceStatus[]>([]);
-
-  const announceRealtime = useCallback((message: string) => {
-    if (!message || lastAnnouncementRef.current === message) return;
-    lastAnnouncementRef.current = message;
-    setRealtimeAnnouncement(message);
-    setRealtimeAnnouncementRevision((value) => value + 1);
-  }, []);
-
-  const mergeLiveNews = useCallback((incoming: FeedNewsItem[]) => {
-    setLiveNews((current) => {
-      const merged = uniqueNews([...incoming, ...current])
-        .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
-        .slice(0, 500);
-      latestLiveNewsAt.current = merged[0]?.publishedAt || null;
-      return merged;
-    });
-  }, []);
-
-  const syncLiveNews = useCallback(async (force = false) => {
-    if (force && liveNewsSyncController.current) {
-      const staleController = liveNewsSyncController.current;
-      liveNewsSyncController.current = null;
-      staleController.abort();
-    }
-    if (liveNewsSyncController.current) return;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 8_000);
-    liveNewsSyncController.current = controller;
-    lastLiveNewsSyncAt.current = Date.now();
-    try {
-      const params = new URLSearchParams({ limit: "120" });
-      const recoveryFrom = liveRecoveryFrom(latestLiveNewsAt.current);
-      if (recoveryFrom) params.set("from", recoveryFrom);
-      const response = await fetch(`${apiUrl("/api/news")}?${params}`, {
-        // A stable URL lets the browser validate the API ETag and receive a
-        // small 304 response when no new item arrived.
-        cache: "no-cache",
-        signal: controller.signal,
-      });
-      if (!response.ok) return false;
-      const payload = await response.json() as { items: FeedNewsItem[] };
-      mergeLiveNews(payload.items);
-      return true;
-    } catch {
-      // The stream watchdog or next foreground recovery retries missed items.
-    } finally {
-      window.clearTimeout(timeout);
-      if (liveNewsSyncController.current === controller) liveNewsSyncController.current = null;
-    }
-  }, [mergeLiveNews]);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const detailRef = useRef<HTMLElement>(null);
+  const lastFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    applyThemeMode(theme);
-  }, [theme]);
-
-  useEffect(() => {
-    const clock = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(clock);
+    document.documentElement.dataset.theme = "dark";
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (meta) meta.content = "#080d12";
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    let events: EventSource | null = null;
-    let lastStreamActivityAt = Date.now();
-    let lastRecoveryAt = 0;
-    let reconnectAttempt = 0;
-    let reconnectTimer: number | null = null;
-    fetch(apiUrl("/api/bootstrap"), { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("初始化失败");
-        return await response.json() as BootstrapPayload;
-      })
-      .then((payload) => {
-        if (cancelled) return;
-        mergeLiveNews(payload.news);
-        setMarket(payload.market);
-        setSources(payload.sources);
-        marketRef.current = payload.market;
-        sourcesRef.current = payload.sources;
-        bootstrapReadyRef.current = true;
-        setRealtimeStatus("initializing");
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : "初始化失败";
-        setQueryError(message);
-        setRealtimeError(message);
-        bootstrapReadyRef.current = false;
-        setRealtimeStatus("error");
-        announceRealtime(message);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        bootstrapSettledRef.current = true;
-        setLoading(false);
-        if (bootstrapReadyRef.current) connectStream();
-      });
+  const items = useMemo(() => {
+    const text = query.trim().toLocaleLowerCase();
+    return (snapshot?.items || []).filter((item) => item.categories.some((category) => enabledCategories.has(category))
+      && (source === "all" || item.source === source) && (!importantOnly || item.important)
+      && (!text || `${item.title} ${item.content} ${item.tags.join(" ")} ${item.locations.map((location) => location.label).join(" ")}`.toLocaleLowerCase().includes(text)));
+  }, [snapshot, enabledCategories, source, importantOnly, query]);
+  const references = useMemo(() => (snapshot?.referencePoints || []).filter((point) => enabledReferences.has(point.kind)), [snapshot, enabledReferences]);
+  const selected = items.find((item) => item.id === selectedId) || null;
+  const locatedCount = items.filter((item) => item.locations.length > 0).length;
+  const locationsCount = new Set(items.flatMap((item) => item.locations.map((location) => location.id))).size;
+  const sourceCount = snapshot?.sources.filter((entry) => entry.state === "live").length || 0;
+  const stale = !!error || !!snapshot && now - new Date(snapshot.generatedAt).getTime() > 90_000;
+  const changingWindow = !!snapshot && snapshotHours !== hours;
+  const statusLabel = !snapshot ? (error ? "连接异常" : "正在连接") : stale ? "更新延迟" : sourceCount === 0 ? "等待数据源" : "持续观测";
+  const activeFilters = query.trim() || source !== "all" || importantOnly || enabledCategories.size !== categories.length;
 
-    const markStreamActive = (source: EventSource) => {
-      if (events !== source || !bootstrapReadyRef.current) return false;
-      lastStreamActivityAt = Date.now();
-      setConnected(true);
-      const recovered = hadConnectedRef.current && !connectedRef.current;
-      connectedRef.current = true;
-      hadConnectedRef.current = true;
-      setRealtimeStatus("connected");
-      setRealtimeError(null);
-      if (recovered) {
-        const latest = latestTrustedTimestamp([
-          marketRef.current?.lastSuccessAt,
-          ...sourcesRef.current.map((source) => source.lastSuccessAt),
-        ]);
-        announceRealtime(`实时连接已恢复${latest ? `，数据截至北京时间 ${formatFull(latest)}` : ""}`);
+  function closeDetail() { setSelectedId(null); setReference(null); lastFocusRef.current?.focus(); }
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
+      if (event.key === "/" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault(); setMobilePanel("feed"); setFeedOpen(true); window.setTimeout(() => searchRef.current?.focus(), 0);
       }
-      return true;
+      if (event.key === "Escape") { setSelectedId(null); setReference(null); setAboutOpen(false); lastFocusRef.current?.focus(); }
     };
-
-    const clearReconnectTimer = () => {
-      if (reconnectTimer === null) return;
-      window.clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    };
-
-    const scheduleStreamReconnect = () => {
-      if (cancelled || document.visibilityState !== "visible" || reconnectTimer !== null) return;
-      const delay = Math.min(30_000, 1_500 * 2 ** Math.min(reconnectAttempt, 4));
-      reconnectAttempt += 1;
-      reconnectTimer = window.setTimeout(() => {
-        reconnectTimer = null;
-        connectStream(true);
-      }, delay);
-    };
-
-    const connectStream = (force = false) => {
-      if (cancelled || !bootstrapSettledRef.current || !bootstrapReadyRef.current) return;
-      if (!force && events && events.readyState !== EventSource.CLOSED) return;
-      if (force) clearReconnectTimer();
-      events?.close();
-      setConnected(false);
-      connectedRef.current = false;
-      setRealtimeStatus("reconnecting");
-      lastStreamActivityAt = Date.now();
-      const streamUrl = new URL(apiUrl("/api/stream"), window.location.href);
-      streamUrl.searchParams.set("client", streamClientId.current);
-      const recoveryFrom = liveRecoveryFrom(latestLiveNewsAt.current);
-      if (recoveryFrom) streamUrl.searchParams.set("from", recoveryFrom);
-      const nextEvents = new EventSource(streamUrl.toString());
-      events = nextEvents;
-      nextEvents.onopen = () => {
-        if (events !== nextEvents) return;
-        reconnectAttempt = 0;
-        clearReconnectTimer();
-        markStreamActive(nextEvents);
-        if (Date.now() - lastLiveNewsSyncAt.current > 5_000) void syncLiveNews();
-      };
-      nextEvents.onerror = () => {
-        if (events !== nextEvents) return;
-        nextEvents.close();
-        events = null;
-        setConnected(false);
-        connectedRef.current = false;
-        setRealtimeStatus("reconnecting");
-        if (!retryingConnectionRef.current) announceRealtime("实时连接中断，正在重连");
-        const recoveryAt = Date.now();
-        if (recoveryAt - lastRecoveryAt >= 1_000) {
-          lastRecoveryAt = recoveryAt;
-          void syncLiveNews();
-        }
-        // Native EventSource retries every few seconds indefinitely. Mobile
-        // network changes can turn that into a reconnect storm, so retry with a
-        // bounded backoff while the periodic HTTP sync fills any gap.
-        scheduleStreamReconnect();
-      };
-      nextEvents.addEventListener("heartbeat", () => markStreamActive(nextEvents));
-      nextEvents.addEventListener("news", (event) => {
-        if (!markStreamActive(nextEvents)) return;
-        const incoming = JSON.parse((event as MessageEvent<string>).data) as FeedNewsItem[];
-        mergeLiveNews(incoming);
-      });
-      nextEvents.addEventListener("market", (event) => {
-        if (!markStreamActive(nextEvents)) return;
-        const nextMarket = JSON.parse((event as MessageEvent<string>).data) as MarketSnapshot;
-        marketRef.current = nextMarket;
-        setMarket(nextMarket);
-      });
-      nextEvents.addEventListener("sources", (event) => {
-        if (!markStreamActive(nextEvents)) return;
-        const nextSources = JSON.parse((event as MessageEvent<string>).data) as SourceStatus[];
-        sourcesRef.current = nextSources;
-        setSources(nextSources);
-      });
-      nextEvents.addEventListener("analysis", (event) => {
-        if (!markStreamActive(nextEvents)) return;
-        const invalidation = JSON.parse((event as MessageEvent<string>).data) as { generatedAt: string };
-        setAnalysisRevision(invalidation.generatedAt);
-      });
-    };
-
-    retryConnectionRef.current = async () => {
-      if (cancelled || retryingConnectionRef.current) return;
-      retryingConnectionRef.current = true;
-      const retryGeneration = ++retryGenerationRef.current;
-      retryCancelledRef.current = false;
-      // A failed bootstrap still allows the user to recover the stream and
-      // any available domains; the retry path is the explicit initialization
-      // recovery boundary.
-      bootstrapReadyRef.current = true;
-      setRetryingConnection(true);
-      setRealtimeStatus("reconnecting");
-      setRealtimeError(null);
-      announceRealtime("正在重连");
-      const synced = await syncLiveNews(true);
-      if (cancelled || retryGeneration !== retryGenerationRef.current || retryCancelledRef.current) return;
-      connectStream(true);
-      if (!synced) {
-        const message = "重试连接失败，请稍后再次重试";
-        setRealtimeError(message);
-        setRealtimeStatus("error");
-        announceRealtime(message);
-      }
-      retryingConnectionRef.current = false;
-      setRetryingConnection(false);
-    };
-    cancelRetryRef.current = () => {
-      if (!retryingConnectionRef.current) return;
-      retryCancelledRef.current = true;
-      retryGenerationRef.current += 1;
-      liveNewsSyncController.current?.abort();
-      retryingConnectionRef.current = false;
-      setRetryingConnection(false);
-      setRealtimeStatus("error");
-      const message = "已取消重试，可再次重试连接";
-      setRealtimeError(message);
-      announceRealtime(message);
-    };
-
-    const recoverLiveConnection = () => {
-      if (document.visibilityState !== "visible") return;
-      const recoveryAt = Date.now();
-      if (recoveryAt - lastRecoveryAt < 1_000) return;
-      lastRecoveryAt = recoveryAt;
-      reconnectAttempt = 0;
-      clearReconnectTimer();
-      void syncLiveNews(true);
-      connectStream(true);
-    };
-    const syncWhenVisible = () => {
-      if (document.visibilityState === "visible") recoverLiveConnection();
-    };
-    const liveSyncTimer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void syncLiveNews();
-    }, liveNewsSyncIntervalMs);
-    const watchdog = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      if (Date.now() - lastStreamActivityAt > streamStaleMs) connectStream(true);
-    }, 8_000);
-    document.addEventListener("visibilitychange", syncWhenVisible);
-    window.addEventListener("online", recoverLiveConnection);
-    window.addEventListener("pageshow", recoverLiveConnection);
-    window.addEventListener("focus", recoverLiveConnection);
-    return () => {
-      cancelled = true;
-      clearReconnectTimer();
-      window.clearInterval(liveSyncTimer);
-      window.clearInterval(watchdog);
-      document.removeEventListener("visibilitychange", syncWhenVisible);
-      window.removeEventListener("online", recoverLiveConnection);
-      window.removeEventListener("pageshow", recoverLiveConnection);
-      window.removeEventListener("focus", recoverLiveConnection);
-      liveNewsSyncController.current?.abort();
-      liveNewsSyncController.current = null;
-      events?.close();
-      retryConnectionRef.current = null;
-      cancelRetryRef.current = null;
-    };
-  }, [announceRealtime, mergeLiveNews, syncLiveNews]);
-
-  useEffect(() => {
-    if (mode !== "replay" || !replaySession?.playing) {
-      replayAnchor.current = null;
-      return;
-    }
-    const anchor: ReplayAnchor = {
-      generation: replaySession.generation,
-      cursorMs: replaySession.cursorMs,
-      monotonicMs: performance.now(),
-      speed: replaySpeed,
-    };
-    replayAnchor.current = anchor;
-    const timer = window.setInterval(() => {
-      const monotonicMs = performance.now();
-      setReplaySession((current) => {
-        if (!current || !current.playing || current.generation !== anchor.generation) return current;
-        const cursorMs = replayCursorAt(current, anchor, monotonicMs);
-        if (cursorMs >= current.replay.toMs) {
-          if (replayAnchor.current === anchor) replayAnchor.current = null;
-          return {
-            ...current,
-            cursorMs: current.replay.toMs,
-            playing: false,
-            announcement: "回放结束",
-            announcementRevision: current.announcementRevision + 1,
-          };
-        }
-        return cursorMs === current.cursorMs ? current : { ...current, cursorMs };
-      });
-    }, 100);
-    return () => {
-      window.clearInterval(timer);
-      if (replayAnchor.current === anchor) replayAnchor.current = null;
-    };
-  }, [mode, replaySession?.generation, replaySession?.playing, replaySpeed]);
-
-  useEffect(() => {
-    const pauseInBackground = () => {
-      const anchor = replayAnchor.current;
-      const monotonicMs = performance.now();
-      replayAnchor.current = null;
-      setReplaySession((current) => {
-        if (!current?.playing) return current;
-        const cursorMs = replayCursorAt(current, anchor, monotonicMs);
-        const ended = cursorMs >= current.replay.toMs;
-        return {
-          ...current,
-          cursorMs: ended ? current.replay.toMs : cursorMs,
-          playing: false,
-          announcement: ended ? "回放结束" : replayAnnouncement("页面进入后台，回放已暂停", cursorMs),
-          announcementRevision: current.announcementRevision + 1,
-        };
-      });
-    };
-    const handleVisibility = () => {
-      if (document.visibilityState !== "visible") pauseInBackground();
-    };
-    const handlePageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) pauseInBackground();
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("pagehide", pauseInBackground);
-    window.addEventListener("pageshow", handlePageShow);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("pagehide", pauseInBackground);
-      window.removeEventListener("pageshow", handlePageShow);
-      replayAnchor.current = null;
-    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  useEffect(() => () => {
-    queryOperation.current?.abort();
-    queryOperation.current = null;
-  }, []);
+  useEffect(() => { if (selectedId || reference) detailRef.current?.focus({ preventScroll: true }); }, [selectedId, reference]);
 
-  const replayTime = replaySession ? new Date(replaySession.cursorMs).toISOString() : undefined;
-  const replayNews = useMemo(() => {
-    if (!replaySession) return [];
-    const count = visibleReplayItemCount(replaySession.replay.newsTimes, replaySession.cursorMs);
-    return replaySession.replay.payload.news.slice(0, count).reverse();
-  }, [replaySession]);
-  const replayMarket = useMemo<MarketSnapshot | null>(() => {
-    if (!replaySession) return null;
-    const count = visibleReplayItemCount(replaySession.replay.marketTimes, replaySession.cursorMs);
-    const points = replaySession.replay.payload.market.points.slice(0, count);
-    const latestTimestamp = points.at(-1)?.timestamp;
-    return {
-      ...replaySession.replay.payload.market,
-      points,
-      updatedAt: latestTimestamp || new Date(0).toISOString(),
-      lastSuccessAt: latestTimestamp || null,
-    };
-  }, [replaySession]);
-
-  const rawItems = mode === "live" ? liveNews : mode === "history" ? historyQuery.items : replayNews;
-  const visibleItems = useMemo(() => rawItems.filter((item) => selectedSources.size === 0 || selectedSources.has(item.source)), [rawItems, selectedSources]);
-  const visibleEvents = useMemo(() => groupNewsEvents(visibleItems), [visibleItems]);
-  const visibleMarket = mode === "replay" ? replayMarket : market;
-  const latestMarketSuccessAt = latestTrustedTimestamp([market?.lastSuccessAt], now);
-  const affected = sources.filter((source) => source.state === "delayed" || source.state === "offline");
-  const marketAffected = Boolean(market?.delayed || (market && !latestMarketSuccessAt));
-  const freshnessLabel = realtimeStatus === "initializing"
-    ? "正在连接"
-    : realtimeStatus === "connected"
-      ? affected.length || marketAffected ? "部分数据源异常，数据可能陈旧" : "实时连接正常"
-      : realtimeStatus === "error" ? "实时连接失败，数据可能陈旧" : "实时连接中断，正在重连；数据可能陈旧";
-  const freshnessDetails = [
-    "新闻最近成功时间未知",
-    `行情最近成功时间${latestMarketSuccessAt ? `北京时间 ${formatFull(latestMarketSuccessAt)}` : "未知"}`,
-    ...affected.map((source) => `${source.label}${source.state === "offline" ? "离线" : "延迟"}，最近成功时间${latestTrustedTimestamp([source.lastSuccessAt], now) ? `北京时间 ${formatFull(latestTrustedTimestamp([source.lastSuccessAt], now)!)}` : "未知"}${source.message ? `：${source.message}` : ""}`),
-  ];
-
-  function toggleSource(source: SourceId) {
-    setSelectedSources((current) => {
-      if (current.size === 0) return new Set([source]);
-      const next = new Set(current);
-      if (next.has(source)) next.delete(source); else next.add(source);
-      return next.size === sources.length || next.size === 0 ? new Set() : next;
-    });
+  function selectItem(id: string) {
+    lastFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setSelectedId(id); setReference(null);
+    const location = items.find((item) => item.id === id)?.locations[0];
+    if (location) { setFocus({ longitude: location.longitude, latitude: location.latitude, zoom: 2.7, key: Date.now() }); setPreset(""); }
   }
 
-  function validateRange() {
-    try {
-      const start = fromBeijingInput(from);
-      const end = fromBeijingInput(to);
-      if (start >= end) throw new Error("结束时间需晚于起始时间");
-      return { start, end };
-    } catch {
-      setQueryError("请填写有效的起止时间");
-      return null;
-    }
+  function selectReference(point: EconomicReferencePoint) {
+    lastFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setReference(point); setSelectedId(null); setPreset("");
+    setFocus({ longitude: point.longitude, latitude: point.latitude, zoom: 2.7, key: Date.now() });
   }
 
-  function pauseReplay(action = "回放已暂停") {
-    const anchor = replayAnchor.current;
-    const monotonicMs = performance.now();
-    replayAnchor.current = null;
-    setReplaySession((current) => {
-      if (!current?.playing) return current;
-      const cursorMs = replayCursorAt(current, anchor, monotonicMs);
-      const ended = cursorMs >= current.replay.toMs;
-      return {
-        ...current,
-        cursorMs: ended ? current.replay.toMs : cursorMs,
-        playing: false,
-        announcement: ended ? "回放结束" : replayAnnouncement(action, cursorMs),
-        announcementRevision: current.announcementRevision + 1,
-      };
-    });
+  function toggleCategory(id: EconomicCategory) {
+    setEnabledCategories((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   }
+  function resetFilters() { setQuery(""); setSource("all"); setImportantOnly(false); setEnabledCategories(new Set(categories.map((entry) => entry.id))); }
+  const detailUrl = safeUrl(selected?.url || reference?.sourceUrl);
 
-  function changeReplayPlaying(playing: boolean) {
-    if (!playing) {
-      pauseReplay();
-      return;
-    }
-    replayAnchor.current = null;
-    setReplaySession((current) => {
-      if (!current) return current;
-      const restarting = current.cursorMs >= current.replay.toMs;
-      const cursorMs = restarting ? current.replay.fromMs : current.cursorMs;
-      return {
-        ...current,
-        cursorMs,
-        playing: true,
-        announcement: replayAnnouncement(restarting ? "重新播放" : "开始播放", cursorMs),
-        announcementRevision: current.announcementRevision + 1,
-      };
-    });
-  }
+  return <main className={`economic-app mobile-${mobilePanel} ${layersOpen ? "" : "is-layers-collapsed"} ${feedOpen ? "" : "is-feed-collapsed"}`}>
+    <header className="economic-header">
+      <a className="economic-brand" href="#" aria-label="景行全球经济情报首页" onClick={(event) => { event.preventDefault(); resetFilters(); closeDetail(); setMobilePanel("map"); setPreset("全球"); setFocus({ ...presets[0], key: Date.now() }); }}><span className="economic-brand-symbol" aria-hidden="true"><i /><i /><i /></span><span><strong>景行<span>JINGXING</span></strong><small>GLOBAL ECONOMIC INTELLIGENCE</small></span></a>
+      <div className="economic-header-divider" /><span className="economic-product-label">全球经济情报</span>
+      <div className="economic-header-end"><span className={`economic-connection ${stale || !sourceCount ? "is-delayed" : ""}`} role="status"><i />{statusLabel}</span><div className="economic-header-clock"><time dateTime={new Date(now).toISOString()}>{formatClock(now)}</time><span>北京时间 UTC+8</span></div><button type="button" className={`economic-icon-button ${refreshing ? "is-refreshing" : ""}`} aria-label={refreshing ? "正在刷新" : "刷新全部数据"} title="刷新全部数据" disabled={refreshing} onClick={refresh}><RefreshCw size={16} /></button><button type="button" className={`economic-icon-button ${aboutOpen ? "is-active" : ""}`} aria-label="数据与使用说明" aria-expanded={aboutOpen} onClick={() => setAboutOpen((value) => !value)}><CircleHelp size={17} /></button></div>
+    </header>
 
-  function changeReplayCursor(cursorMs: number, announce: boolean) {
-    replayAnchor.current = null;
-    setReplaySession((current) => {
-      if (!current) return current;
-      const nextCursorMs = clampReplayCursor(cursorMs, current.replay.fromMs, current.replay.toMs);
-      const ended = nextCursorMs >= current.replay.toMs;
-      return {
-        ...current,
-        cursorMs: nextCursorMs,
-        playing: false,
-        ...(announce ? {
-          announcement: ended ? "回放结束" : replayAnnouncement("已跳转", nextCursorMs),
-          announcementRevision: current.announcementRevision + 1,
-        } : {}),
-      };
-    });
-  }
+    <div className="economic-map-stage"><Suspense fallback={<div className="economic-scene-loading" role="status"><Globe2 size={40} /><span>正在构建全球视野</span></div>}><EconomicMap items={items} referencePoints={references} selectedId={selected?.id || null} onSelect={selectItem} onSelectReference={selectReference} projection={projection} focus={focus} /></Suspense></div>
+    <div className="economic-map-toolbar" aria-label="地图视图"><div className="economic-projection-switch" role="group" aria-label="地图投影"><button type="button" aria-pressed={projection === "globe"} title="地球视图" onClick={() => setProjection("globe")}><Globe2 size={15} /><span>地球</span></button><button type="button" aria-pressed={projection === "mercator"} title="平面地图" onClick={() => setProjection("mercator")}><MapIcon size={15} /><span>平面</span></button></div><span className="economic-toolbar-separator" /><div className="economic-presets" role="group" aria-label="地图区域">{presets.map((entry) => <button type="button" key={entry.label} aria-pressed={preset === entry.label} onClick={() => { setPreset(entry.label); setFocus({ longitude: entry.longitude, latitude: entry.latitude, zoom: entry.zoom, key: Date.now() }); }}>{entry.label}</button>)}</div></div>
 
-  function changeReplaySpeed(value: number) {
-    if (!isReplaySpeed(value)) return;
-    const anchor = replayAnchor.current;
-    const monotonicMs = performance.now();
-    replayAnchor.current = null;
-    setReplaySession((current) => {
-      if (!current) return current;
-      const cursorMs = replayCursorAt(current, anchor, monotonicMs);
-      const ended = cursorMs >= current.replay.toMs;
-      return {
-        ...current,
-        cursorMs: ended ? current.replay.toMs : cursorMs,
-        playing: ended ? false : current.playing,
-        announcement: ended ? "回放结束" : `回放速率已设为 ${replaySpeedLabel(value)}`,
-        announcementRevision: current.announcementRevision + 1,
-      };
-    });
-    setReplaySpeed(value);
-  }
+    <aside className="economic-layers economic-panel" aria-label="经济图层与来源">
+      <div className="economic-panel-heading"><div><Layers3 size={15} /><h1>经济图层</h1></div><span className="economic-section-code">LAYERS</span><button type="button" className="economic-panel-collapse" aria-label="收起经济图层" onClick={() => setLayersOpen(false)}><ChevronRight size={14} /></button></div>
+      <div className="economic-layer-intro"><span>从全球事件，读懂经济脉动</span><strong>{snapshot ? snapshot.coverage.economicCount.toLocaleString() : "—"}<small> 条经济消息 · {snapshotHours}H</small></strong></div>
+      <div className="economic-section-label"><span>消息主题</span><button type="button" onClick={() => setEnabledCategories(enabledCategories.size === categories.length ? new Set() : new Set(categories.map((entry) => entry.id)))}>{enabledCategories.size === categories.length ? "全部关闭" : "全部开启"}</button></div>
+      <div className="economic-category-list">{categories.map(({ id, label, color, icon: Icon }) => <button type="button" className="economic-layer" style={{ "--category-color": color } as CSSProperties} key={id} aria-pressed={enabledCategories.has(id)} onClick={() => toggleCategory(id)}><span className="economic-layer-icon"><Icon size={16} /></span><span className="economic-layer-name">{label}</span><span className="economic-layer-count">{snapshot?.categories.find((category) => category.id === id)?.count ?? "—"}</span><span className="economic-toggle" aria-hidden="true"><i /></span></button>)}</div>
+      <div className="economic-section-label"><span>经济基础设施</span><span className="economic-static-label">静态参考</span></div>
+      <div className="economic-reference-list">{referenceLayers.map(({ id, label, icon: Icon }) => <button type="button" key={id} className="economic-reference-layer" aria-pressed={enabledReferences.has(id)} onClick={() => setEnabledReferences((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })}><Icon size={14} /><span>{label}</span><span className="economic-check" aria-hidden="true">{enabledReferences.has(id) ? <Check size={11} /> : null}</span></button>)}</div>
+      <div className="economic-layer-summary"><div><strong>{locatedCount}</strong><span>有地区线索</span></div><div><strong>{locationsCount}</strong><span>关联地区</span></div></div>
+      <section className="economic-source-section"><button type="button" className="economic-source-heading" aria-expanded={sourcesOpen} onClick={() => setSourcesOpen((value) => !value)}><span><Radio size={13} />数据源状态</span><span>{sourceCount}/{snapshot?.sources.length || 5}<ChevronDown size={13} className={sourcesOpen ? "is-open" : ""} /></span></button>{sourcesOpen ? <div className="economic-source-list">{snapshot?.sources.map((entry) => <div className="economic-source" key={entry.id} title={entry.message || (entry.lastSuccessAt ? `最后采集 ${formatFull(entry.lastSuccessAt)}` : "等待首次采集")}><span><i className={`is-${entry.state}`} />{entry.label}</span><small>{sourceLabels[entry.state]}</small></div>) || <p>正在连接财经数据源…</p>}</div> : null}</section>
+      <p className="economic-layer-note"><ShieldCheck size={12} /><span>消息来源可追溯<br />地图标记为正文提及地区</span></p>
+    </aside>
 
-  async function runSearch() {
-    if (queryOperation.current) return;
-    const range = validateRange();
-    if (!range) return;
-    const controller = new AbortController();
-    pauseReplay();
-    queryOperation.current = controller;
-    setQueryBusy(true);
-    setQueryError(null);
-    try {
-      const params = new URLSearchParams({ from: range.start, to: range.end, limit: String(NEWS_QUERY_MAX_LIMIT), remote: "1" });
-      if (query.trim()) params.set("q", query.trim());
-      const response = await fetch(`${apiUrl("/api/news")}?${params}`, { signal: controller.signal });
-      const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(apiError(payload, "查询失败"));
-      const parsed = parseNewsQueryResponse(payload);
-      setHistoryQuery((current) => ({
-        items: parsed.items,
-        completeness: parsed.completeness,
-        revision: current.revision + 1,
-      }));
-      setMode("history");
-      setQueryOpen(false);
-    } catch (error) {
-      setQueryError(error instanceof Error ? error.message : "查询失败");
-    } finally {
-      if (queryOperation.current === controller) {
-        queryOperation.current = null;
-        setQueryBusy(false);
-      }
-    }
-  }
+    <aside className="economic-feed economic-panel" aria-labelledby="economic-feed-title">
+      <div className="economic-panel-heading"><div><Newspaper size={15} /><h2 id="economic-feed-title">经济快讯</h2><span className="economic-count-badge">{items.length}</span></div><span className={`economic-feed-live ${stale || !snapshot ? "is-delayed" : ""}`}><i />{!snapshot ? "CONNECTING" : stale ? "DELAYED" : "LIVE FEED"}</span><button type="button" className="economic-panel-collapse" aria-label="收起经济快讯" onClick={() => setFeedOpen(false)}><ChevronRight size={14} /></button></div>
+      <div className="economic-feed-filters"><label className="economic-search"><Search size={15} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索事件、地区、关键词" aria-label="搜索经济消息" />{query ? <button type="button" aria-label="清空搜索" onClick={() => { setQuery(""); searchRef.current?.focus(); }}><X size={13} /></button> : <kbd>/</kbd>}</label><div className="economic-feed-controls"><div className="economic-periods" role="group" aria-label="消息时间范围">{[6, 24, 72].map((value) => <button type="button" key={value} aria-pressed={hours === value} onClick={() => setHours(value)}>{value}H</button>)}</div><label className="economic-source-filter"><span className="sr-only">消息来源</span><select value={source} onChange={(event) => setSource(event.target.value)}><option value="all">全部来源</option>{snapshot?.sources.map((entry) => <option value={entry.id} key={entry.id}>{entry.label}</option>)}</select><ChevronDown size={12} /></label><button type="button" className="economic-important-filter" aria-pressed={importantOnly} title="仅看重点消息" aria-label="仅看重点消息" onClick={() => setImportantOnly((value) => !value)}><Star size={14} /></button></div></div>
+      {error || changingWindow ? <div className="economic-feed-warning" role="status">{error || `正在加载 ${hours}H 消息…`}{snapshot ? ` · 暂保留 ${snapshotHours}H 数据` : ""}{error ? <button type="button" disabled={refreshing} onClick={refresh}>重试</button> : null}</div> : null}
+      <div className="economic-feed-summary"><span>{activeFilters ? "筛选结果" : "按发布时间排序"}</span><span>{items.length} 条{snapshot?.coverage.truncated ? " · 已达窗口上限" : ""}</span></div>
+      <div className="economic-feed-scroll" aria-busy={!snapshot && refreshing}>{!snapshot && refreshing ? <div className="economic-feed-skeleton" aria-label="消息加载中">{[1, 2, 3, 4, 5].map((key) => <div key={key}><i /><b /><span /><span /></div>)}</div> : items.length ? <ol className="economic-news-list">{items.map((item) => <NewsCard key={item.id} item={item} selected={selected?.id === item.id} now={now} onSelect={selectItem} />)}</ol> : <div className="economic-feed-empty"><Search size={25} /><strong>{snapshot ? "没有符合条件的消息" : "暂时无法获取经济快讯"}</strong><p>{snapshot ? "调整主题、来源或时间范围，继续探索全球经济动态。" : error || "数据源正在准备中，请稍后刷新。"}</p>{activeFilters ? <button type="button" onClick={resetFilters}>清除筛选</button> : <button type="button" disabled={refreshing} onClick={refresh}>重新获取</button>}</div>}</div>
+      <div className="economic-feed-footer"><span><span className="economic-small-dot" />每 30 秒自动更新</span><span>{snapshot ? `更新于 ${formatClock(snapshot.generatedAt)}` : "等待同步"}</span></div>
+    </aside>
 
-  async function runReplay() {
-    if (queryOperation.current) return;
-    const range = validateRange();
-    if (!range) return;
-    const controller = new AbortController();
-    pauseReplay();
-    queryOperation.current = controller;
-    setQueryBusy(true);
-    setQueryError(null);
-    try {
-      const response = await fetch(`${apiUrl("/api/replay")}?${new URLSearchParams({ from: range.start, to: range.end })}`, { signal: controller.signal });
-      const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(apiError(payload, "回放加载失败"));
-      const parsed = parseReplayResponse(payload);
-      if (!parsed.payload.news.length && !parsed.payload.market.points.length) throw new Error("该时间段尚无可回放数据");
-      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-      const generation = replayGeneration.current + 1;
-      replayGeneration.current = generation;
-      replayAnchor.current = null;
-      setReplaySpeed(DEFAULT_REPLAY_SPEED);
-      setReplaySession({
-        generation,
-        replay: parsed,
-        cursorMs: parsed.fromMs,
-        playing: !reducedMotion,
-        announcement: reducedMotion
-          ? replayAnnouncement("回放已加载并暂停", parsed.fromMs)
-          : replayAnnouncement("开始播放", parsed.fromMs),
-        announcementRevision: 1,
-      });
-      setMode("replay");
-      setQueryOpen(false);
-    } catch (error) {
-      setQueryError(error instanceof Error ? error.message : "回放加载失败");
-    } finally {
-      if (queryOperation.current === controller) {
-        queryOperation.current = null;
-        setQueryBusy(false);
-      }
-    }
-  }
+    {!layersOpen ? <nav className="economic-layer-rail economic-panel" aria-label="折叠经济图层"><button type="button" aria-label="展开经济图层" title="展开经济图层" onClick={() => setLayersOpen(true)}><Layers3 size={18} /></button>{categories.map(({ id, label, color, icon: Icon }) => <button type="button" key={id} title={label} aria-label={label} aria-pressed={enabledCategories.has(id)} onClick={() => toggleCategory(id)} style={{ "--category-color": color } as CSSProperties}><Icon size={17} /></button>)}</nav> : null}
+    {!feedOpen ? <nav className="economic-feed-rail economic-panel" aria-label="折叠经济快讯"><button type="button" aria-label="展开经济快讯" title="展开经济快讯" onClick={() => setFeedOpen(true)}><Newspaper size={18} /><span>{items.length}</span></button><button type="button" aria-label="打开消息搜索" title="打开消息搜索" onClick={() => { setFeedOpen(true); window.setTimeout(() => searchRef.current?.focus(), 0); }}><Search size={17} /></button><button type="button" aria-label="数据与使用说明" title="数据与使用说明" onClick={() => setAboutOpen(true)}><CircleHelp size={17} /></button></nav> : null}
 
-  function returnLive() {
-    replayAnchor.current = null;
-    setMode("live");
-    setHistoryQuery({ items: [], completeness: null, revision: 0 });
-    setReplaySession(null);
-  }
+    {selected || reference ? <section className="economic-detail economic-panel" ref={detailRef} tabIndex={-1} aria-labelledby="economic-detail-title"><div className="economic-detail-eyebrow"><span><Crosshair size={12} />{selected ? "EVENT INTELLIGENCE" : "ECONOMIC INFRASTRUCTURE"}</span><button type="button" className="economic-icon-button" aria-label="关闭详情" onClick={closeDetail}><X size={15} /></button></div><h2 id="economic-detail-title">{selected?.title || reference?.name}</h2>
+      {selected ? <><div className="economic-detail-meta"><span>{selected.sourceLabel}</span><time dateTime={selected.publishedAt}>{formatFull(selected.publishedAt)}</time></div><div className="economic-detail-tags">{selected.categories.map((id) => <span key={id} style={{ color: categoryById.get(id)?.color }}>{categoryById.get(id)?.label}</span>)}{selected.important ? <span className="is-important"><Star size={11} />重点</span> : null}</div><p className="economic-detail-content">{selected.content || selected.title}</p><div className="economic-location-evidence"><strong><MapPin size={12} />地区线索</strong>{selected.locations.length ? selected.locations.map((location) => <div key={location.id}><span>{location.label}<small>{precisionLabels[location.precision]}</small></span><p>正文匹配：{location.matchedTerms.join("、")}</p></div>) : <p>正文未识别到明确地区。保留在消息列表，不在地图上推测落点。</p>}<small>标记表示文章提及地区，不是事件的精确发生位置。</small></div></> : <><div className="economic-detail-tags"><span>静态参考 · {referenceLayers.find((layer) => layer.id === reference?.kind)?.label}</span></div><p className="economic-detail-content">{reference?.description}</p><p className="economic-detail-reference-note">经济地理背景参考，不表示实时吞吐量、运行状态或当前事件。</p></>}
+      <div className="economic-detail-bottom"><span>{selected ? "原始报道 · 北京时间" : "公开地理资料"}</span>{detailUrl ? <a href={detailUrl} target="_blank" rel="noreferrer">{selected ? "阅读原文" : "查看参考来源"}<ExternalLink size={12} /></a> : <span>暂无原文链接</span>}</div></section> : null}
 
-  return (
-    <div className={`app-shell is-${workspaceView}`}>
-      <Header
-        connected={connected}
-        serverTime={new Date(now).toISOString()}
-        sources={sources}
-        theme={theme}
-        activeView={workspaceView}
-        onViewChange={setWorkspaceView}
-        onThemeChange={setTheme}
-      />
-      {mode === "live" ? (
-        <div className={`realtime-freshness is-${realtimeStatus}`} aria-busy={retryingConnection}>
-          <span className="realtime-freshness-dot" aria-hidden="true" />
-          <span className="realtime-freshness-copy">
-            <strong>{freshnessLabel}</strong>
-            <span>{freshnessDetails.join("；")}</span>
-          </span>
-          {realtimeError ? <span className="realtime-freshness-error" role="alert">{realtimeError}</span> : null}
-          {realtimeStatus !== "connected" || affected.length || marketAffected ? (
-            <button type="button" className="realtime-retry" disabled={retryingConnection} onClick={() => void retryConnectionRef.current?.()}>
-              {retryingConnection ? "正在重连" : "重试连接"}
-            </button>
-          ) : null}
-          {retryingConnection ? <button type="button" className="realtime-retry realtime-cancel" onClick={() => cancelRetryRef.current?.()}>取消重试</button> : null}
-          <span className="sr-only" role="status" key={realtimeAnnouncementRevision}>{realtimeAnnouncement}</span>
-        </div>
-      ) : null}
-      <div className="workspace-scroll">
-        {workspaceView === "live" ? (
-          <div className="workspace-page">
-            <main className="dashboard">
-              <NewsFeed
-                items={visibleItems}
-                events={visibleEvents}
-                feedView={feedView}
-                mode={mode}
-                sources={sources}
-                selectedSources={selectedSources}
-                now={now}
-                replayCursorMs={mode === "replay" && replaySession ? replaySession.cursorMs : undefined}
-                replayPlaying={mode === "replay" && replaySession ? replaySession.playing : false}
-                replayEnded={mode === "replay" && replaySession ? replaySession.cursorMs >= replaySession.replay.toMs : false}
-                loading={loading}
-                error={mode === "live" && !liveNews.length ? queryError : null}
-                replayTime={replayTime}
-                historyCompleteness={historyQuery.completeness}
-                historyCompletenessRevision={historyQuery.revision}
-                historyReturnedCount={historyQuery.items.length}
-                onModeLive={returnLive}
-                onFeedViewChange={setFeedView}
-                onToggleSource={toggleSource}
-                onClearSources={() => setSelectedSources(new Set())}
-                onOpenQuery={() => { setQueryError(null); setQueryOpen(true); }}
-              />
-              <div className="market-column">
-                <MarketChart market={visibleMarket} replaying={mode === "replay"} />
-                {mode === "replay" && replaySession ? (
-                  <ReplayBar
-                    fromMs={replaySession.replay.fromMs}
-                    toMs={replaySession.replay.toMs}
-                    cursorMs={replaySession.cursorMs}
-                    playing={replaySession.playing}
-                    speed={replaySpeed}
-                    announcement={replaySession.announcement}
-                    announcementRevision={replaySession.announcementRevision}
-                    onPlayingChange={changeReplayPlaying}
-                    onCursorChange={(value) => changeReplayCursor(value, false)}
-                    onCursorCommit={(value) => changeReplayCursor(value, true)}
-                    onSpeedChange={changeReplaySpeed}
-                    onClose={returnLive}
-                  />
-                ) : null}
-              </div>
-            </main>
-          </div>
-        ) : workspaceView === "insights" ? (
-          <div className="workspace-page">
-            {!loading ? (
-              <Suspense fallback={<InsightsFallback />}>
-                <InsightsDashboard revision={analysisRevision} />
-              </Suspense>
-            ) : <InsightsFallback />}
-          </div>
-        ) : (
-          <div className="workspace-page situation-workspace-page">
-            <Suspense fallback={<SituationFallback />}>
-              <GlobalSituationMap liveNews={liveNews} market={market} />
-            </Suspense>
-          </div>
-        )}
-      </div>
+    {aboutOpen ? <section className="economic-about economic-panel" role="dialog" aria-labelledby="economic-about-title"><div className="economic-panel-heading"><h2 id="economic-about-title">关于经济情报</h2><button type="button" className="economic-icon-button" aria-label="关闭说明" onClick={() => setAboutOpen(false)}><X size={16} /></button></div><p>{snapshot?.methodology || "聚合公开财经来源，按经济主题整理消息；以正文明确提及的地区生成地图线索。"}</p><p>来源状态反映采集结果。更新延迟时保留最近一次数据；行情时间与消息时间各自显示。</p><p>{snapshot?.coverage.truncated ? `当前窗口返回最近 ${snapshot.coverage.returnedCount} 条经济消息。` : ""}搜索与图层筛选作用于已加载消息。</p><p>金融中心、港口和贸易通道为静态参考。聚合与分类不构成事实核验或投资建议。</p><div><kbd>/</kbd> 搜索消息 <kbd>Esc</kbd> 关闭详情</div></section> : null}
 
-      {queryOpen ? <QueryPanel from={from} to={to} query={query} busy={queryBusy} error={queryError} onFromChange={setFrom} onToChange={setTo} onQueryChange={setQuery} onClose={() => setQueryOpen(false)} onSearch={runSearch} onReplay={runReplay} /> : null}
-    </div>
-  );
+    <EconomicMarkets revision={revision} />
+    <nav className="economic-mobile-nav" aria-label="工作台面板"><button type="button" aria-pressed={mobilePanel === "map"} onClick={() => setMobilePanel("map")}><Globe2 size={17} />地图</button><button type="button" aria-pressed={mobilePanel === "feed"} onClick={() => setMobilePanel("feed")}><Newspaper size={17} />快讯<span>{items.length}</span></button><button type="button" aria-pressed={mobilePanel === "layers"} onClick={() => setMobilePanel("layers")}><SlidersHorizontal size={17} />图层</button></nav>
+  </main>;
+}
+
+function NewsCard({ item, selected, now, onSelect }: { item: EconomicNewsItem; selected: boolean; now: number; onSelect: (id: string) => void }) {
+  const category = categoryById.get(item.categories[0]);
+  return <li><button type="button" className={`economic-news-card ${selected ? "is-selected" : ""}`} aria-pressed={selected} onClick={() => onSelect(item.id)} style={{ "--category-color": category?.color || "#d6b779" } as CSSProperties}><div className="economic-news-meta"><span className="economic-news-source"><i />{item.sourceLabel}</span><time dateTime={item.publishedAt} title={formatFull(item.publishedAt)}>{relativeTime(item.publishedAt, now)}</time></div><h3>{item.important ? <Star size={11} className="economic-news-star" aria-label="重点消息" /> : null}{item.title}</h3><div className="economic-news-bottom"><span>{category?.label || "经济动态"}</span><span className="economic-news-region"><MapPin size={10} />{item.locations[0]?.label || "地区未确认"}{item.locations.length > 1 ? ` +${item.locations.length - 1}` : ""}</span><ChevronRight size={12} /></div></button></li>;
 }

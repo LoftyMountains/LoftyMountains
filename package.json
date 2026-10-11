@@ -3,17 +3,22 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=18.18" },
+  "engines": {
+    "node": ">=18.18"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build && npm run check:bundle",
     "check:bundle": "node scripts/check-bundle-size.mjs dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prebuild": "node scripts/prepare-map-worker.mjs",
+    "predev": "node scripts/prepare-map-worker.mjs"
   },
   "dependencies": {
     "d3": "^7.9.0",
     "d3-cloud": "^1.2.9",
     "lucide-react": "^0.539.0",
+    "maplibre-gl": "5.20.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

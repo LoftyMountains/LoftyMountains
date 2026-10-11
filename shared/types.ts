@@ -1,5 +1,74 @@
 export type SourceId = "cls" | "wallstreetcn" | "jin10" | "eastmoney" | "sina";
 
+export type EconomicCategory = "macro" | "monetary" | "markets" | "trade" | "energy" | "industry";
+
+export interface GlobalMarketQuote {
+  symbol: string;
+  name: string;
+  group: "indices" | "commodities" | "fx" | "crypto";
+  price: number | null;
+  changePercent: number | null;
+  currency: string;
+  spark: number[];
+  observedAt: string | null;
+  fetchedAt: string | null;
+  marketOpen: boolean;
+  state: "available" | "stale" | "unavailable";
+  sourceUrl: string;
+  provider?: string;
+}
+
+export interface GlobalMarketsSnapshot {
+  generatedAt: string;
+  provider: string;
+  refreshAfterMs: number;
+  quotes: GlobalMarketQuote[];
+}
+
+/** A region mentioned in an article, never a verified event coordinate. */
+export interface EconomicLocation {
+  id: string;
+  label: string;
+  longitude: number;
+  latitude: number;
+  precision: "country" | "region" | "city";
+  matchedTerms: string[];
+}
+
+export interface EconomicNewsItem extends FeedNewsItem {
+  categories: EconomicCategory[];
+  locations: EconomicLocation[];
+}
+
+export interface EconomicReferencePoint {
+  id: string;
+  name: string;
+  kind: "financial-center" | "port" | "chokepoint";
+  longitude: number;
+  latitude: number;
+  description: string;
+  sourceUrl: string;
+}
+
+export interface EconomicSnapshot {
+  generatedAt: string;
+  from: string;
+  to: string;
+  latestPublishedAt: string | null;
+  items: EconomicNewsItem[];
+  categories: { id: EconomicCategory; label: string; count: number }[];
+  sources: SourceStatus[];
+  referencePoints: EconomicReferencePoint[];
+  coverage: {
+    scannedCount: number;
+    economicCount: number;
+    returnedCount: number;
+    locatedCount: number;
+    truncated: boolean;
+  };
+  methodology: string;
+}
+
 export interface RelatedStock {
   symbol: string;
   name: string;

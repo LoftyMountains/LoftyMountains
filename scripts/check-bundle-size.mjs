@@ -6,6 +6,9 @@ import { gzipSync } from "node:zlib";
 const outputDirectory = path.resolve(process.argv[2] || "dist");
 const initialBudget = 150 * 1024;
 const chunkBudget = 80 * 1024;
+// The deferred WebGL engine includes its map worker; keep a separate explicit
+// ceiling while retaining the existing budget for application code.
+const mapEngineBudget = 450 * 1024;
 const indexFile = path.join(outputDirectory, "index.html");
 
 if (!fs.existsSync(indexFile)) {
@@ -47,12 +50,14 @@ const assets = javascriptFiles.map((file) => ({
   initial: initialFiles.has(file),
 })).sort((left, right) => right.gzipBytes - left.gzipBytes);
 const initialBytes = assets.filter((asset) => asset.initial).reduce((total, asset) => total + asset.gzipBytes, 0);
-const oversizedAssets = assets.filter((asset) => asset.gzipBytes > chunkBudget);
+const budgetFor = (asset) => !asset.initial && (/(?:^|\/)map-engine-[^/]+\.js$/.test(asset.name)
+  || asset.name === "vendor/maplibre/maplibre-gl-csp-worker.js") ? mapEngineBudget : chunkBudget;
+const oversizedAssets = assets.filter((asset) => asset.gzipBytes > budgetFor(asset));
 
 for (const asset of assets) {
   console.log(`${asset.initial ? "initial" : "async  "} ${(asset.gzipBytes / 1024).toFixed(2).padStart(7)}KB  ${asset.name}`);
 }
-console.log(`[bundle-budget] initial ${(initialBytes / 1024).toFixed(2)}KB / ${(initialBudget / 1024).toFixed(0)}KB; largest ${(assets[0]?.gzipBytes / 1024 || 0).toFixed(2)}KB / ${(chunkBudget / 1024).toFixed(0)}KB`);
+console.log(`[bundle-budget] initial ${(initialBytes / 1024).toFixed(2)}KB / ${(initialBudget / 1024).toFixed(0)}KB; application chunk ${chunkBudget / 1024}KB; deferred map engine ${mapEngineBudget / 1024}KB`);
 
 if (initialBytes > initialBudget || oversizedAssets.length) {
   if (initialBytes > initialBudget) console.error(`[bundle-budget] initial JavaScript exceeds budget by ${((initialBytes - initialBudget) / 1024).toFixed(2)}KB`);
