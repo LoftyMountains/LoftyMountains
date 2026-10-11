@@ -131,6 +131,6 @@ describe("continuous replay clock", () => {
     const utcBoundary = Date.parse("2029-12-31T15:59:30.000Z");
     const cursor = replayCursorFromElapsed(utcBoundary, 500, 60, utcBoundary, utcBoundary + 60_000);
     expect(cursor).toBe(Date.parse("2029-12-31T16:00:00.000Z"));
-    expect(formatFull(cursor)).toBe("2030/01/01 00:00:00");
+    expect(formatFull(cursor)).toBe("Jan 01, 2030, 00:00:00");
   });
 });

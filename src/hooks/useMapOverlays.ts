@@ -18,12 +18,12 @@ export function useMapOverlays() {
       setRefreshing(true);
       try {
         const response = await fetch(apiUrl("/api/map-overlays"), { signal: controller.signal, cache: "no-store" });
-        if (!response.ok) throw new Error(`地图图层暂时无法更新（${response.status}）`);
+        if (!response.ok) throw new Error(`Map layer update failed (${response.status})`);
         const data = await response.json() as MapOverlaysSnapshot;
-        if (!Array.isArray(data.features) || !Array.isArray(data.layers) || data.persisted !== false) throw new Error("地图图层数据格式异常");
+        if (!Array.isArray(data.features) || !Array.isArray(data.layers) || data.persisted !== false) throw new Error("Invalid map layer format");
         if (!disposed) { setSnapshot(data); setError(null); }
       } catch (failure) {
-        if (!disposed) setError(failure instanceof Error && failure.name !== "AbortError" ? failure.message : "地图图层更新超时");
+        if (!disposed) setError(failure instanceof Error && failure.name !== "AbortError" ? failure.message : "Map layer update timed out");
       } finally {
         window.clearTimeout(timer); controller = null;
         if (!disposed) setRefreshing(false);

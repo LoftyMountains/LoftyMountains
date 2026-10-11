@@ -19,12 +19,12 @@ export function useSourceCatalog() {
       setRefreshing(true);
       try {
         const response = await fetch(apiUrl("/api/sources"), { signal: request.signal, cache: "no-store" });
-        if (!response.ok) throw new Error(`来源目录暂时无法更新（${response.status}）`);
+        if (!response.ok) throw new Error(`Source catalog update failed (${response.status})`);
         const data = await response.json() as IntelligenceSourcesSnapshot;
-        if (!Array.isArray(data.sources) || data.persisted !== false || !Number.isFinite(Date.parse(data.generatedAt))) throw new Error("来源目录格式异常");
+        if (!Array.isArray(data.sources) || data.persisted !== false || !Number.isFinite(Date.parse(data.generatedAt))) throw new Error("Invalid source catalog format");
         if (!disposed) { setSnapshot(data); setError(null); }
       } catch (failure) {
-        if (!disposed) setError(failure instanceof Error && failure.name !== "AbortError" ? failure.message : "来源目录更新超时");
+        if (!disposed) setError(failure instanceof Error && failure.name !== "AbortError" ? failure.message : "Source catalog update timed out");
       } finally {
         window.clearTimeout(timeout); controller = null;
         if (!disposed) setRefreshing(false);

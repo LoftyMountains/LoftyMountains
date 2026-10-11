@@ -34,9 +34,9 @@ const HOME = { longitude: 70, latitude: 23, zoom: 2.1 };
 const BASEMAP_URL = `${import.meta.env.BASE_URL}data/countries.geojson`;
 const GRATICULE = geoGraticule10();
 const KIND_LABELS: Record<EconomicReferencePoint["kind"], string> = {
-  "financial-center": "金融中心",
-  port: "主要港口",
-  chokepoint: "贸易咽喉",
+  "financial-center": "Financial centers",
+  port: "Major ports",
+  chokepoint: "Trade chokepoints",
 };
 
 function reducedMotion() {
@@ -65,7 +65,7 @@ function aggregateMentions(items: EconomicNewsItem[]): MentionPoint[] {
 }
 
 function mentionLabel(point: MentionPoint) {
-  return `${point.location.label}，${point.itemIds.length} 条快讯提及。查看最新快讯`;
+  return `${point.location.label}: mentioned in ${point.itemIds.length} news records. View the latest news`;
 }
 
 /** D3 uses spherical clockwise exterior rings; RFC 7946 basemaps may use the opposite. */
@@ -152,7 +152,7 @@ export function EconomicMap({ items, referencePoints, features, selectedFeatureI
       });
       mapRef.current = map;
       map.touchZoomRotate.disableRotation();
-      map.getCanvas().setAttribute("aria-label", "全球情报地图。方向键平移，加减键缩放；使用地图实体选择器或快讯列表查看全部信息。");
+      map.getCanvas().setAttribute("aria-label", "Global intelligence map. Use arrow keys to pan and plus or minus to zoom. Use the map object selector or news feed to access details.");
       loadDeadline = window.setTimeout(() => { if (!disposed) setFallback(true); }, 15_000);
       map.on("load", () => {
         window.clearTimeout(loadDeadline);
@@ -295,8 +295,8 @@ export function EconomicMap({ items, referencePoints, features, selectedFeatureI
       }
       marker.setLngLat([point.longitude, point.latitude]);
       const button = marker.getElement();
-      button.setAttribute("aria-label", `${point.name} · ${KIND_LABELS[point.kind]} · 静态参考点`);
-      button.setAttribute("title", `${point.name} · ${KIND_LABELS[point.kind]}（静态参考）`);
+      button.setAttribute("aria-label", `${point.name} · ${KIND_LABELS[point.kind]} · Static reference point`);
+      button.setAttribute("title", `${point.name} · ${KIND_LABELS[point.kind]} (Static reference)`);
       button.querySelector(".economic-reference-name")!.textContent = point.name;
     }
     for (const point of mentions) {
@@ -379,7 +379,7 @@ export function EconomicMap({ items, referencePoints, features, selectedFeatureI
   return <div className={`economic-map${fallback ? " is-fallback" : ""}`} data-projection={projection}>
     <div ref={containerRef} className="economic-map-canvas" />
     {fallback && <div className="economic-map-fallback">
-      <svg className="economic-fallback-globe" viewBox={`0 0 ${size.width} ${size.height}`} role="img" aria-label="经济地理地图，二维兼容模式。使用缩放按钮，拖动地图平移。"
+      <svg className="economic-fallback-globe" viewBox={`0 0 ${size.width} ${size.height}`} role="img" aria-label="Economic geography map in 2D compatibility mode. Use the zoom buttons and drag to pan."
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -420,7 +420,7 @@ export function EconomicMap({ items, referencePoints, features, selectedFeatureI
       {referencePoints.map((point) => {
         const position = project(point.longitude, point.latitude);
         return position && <button type="button" key={point.id} className={`economic-reference-marker economic-fallback-marker is-${point.kind}`} style={{ left: position[0], top: position[1] }}
-          aria-label={`${point.name} · ${KIND_LABELS[point.kind]} · 静态参考点`} title={`${point.name} · 静态参考`} onClick={() => onSelectReference(point)}>
+          aria-label={`${point.name} · ${KIND_LABELS[point.kind]} · Static reference point`} title={`${point.name} · Static reference`} onClick={() => onSelectReference(point)}>
           <span className="economic-reference-symbol" aria-hidden="true" /><span className="economic-reference-name">{point.name}</span>
         </button>;
       })}
@@ -440,26 +440,26 @@ export function EconomicMap({ items, referencePoints, features, selectedFeatureI
       <span>{OVERLAY_LAYERS[hoveredOverlay.feature.properties.layer].label} · {POSITION_LABELS[hoveredOverlay.feature.properties.positionKind]}</span>
     </div>}
     {overlays.length > 0 && <label className="map-overlay-selector">
-      <span>地图实体 <b>{overlays.length}</b></span>
-      <select aria-label="选择地图实体查看详情" value={selectedFeatureId && overlayById.has(selectedFeatureId) ? selectedFeatureId : ""} onChange={(event) => { if (event.target.value) onSelectFeature(event.target.value); }}>
-        <option value="" disabled>选择对象查看位置与来源</option>
+      <span>Map objects <b>{overlays.length}</b></span>
+      <select aria-label="Select a map object to view details" value={selectedFeatureId && overlayById.has(selectedFeatureId) ? selectedFeatureId : ""} onChange={(event) => { if (event.target.value) onSelectFeature(event.target.value); }}>
+        <option value="" disabled>Select an object for location and source</option>
         {(Object.keys(OVERLAY_LAYERS) as MapLayerId[]).map((layer) => {
           const layerItems = overlays.filter((overlay) => overlay.feature.properties.layer === layer);
           return layerItems.length > 0 && <optgroup key={layer} label={OVERLAY_LAYERS[layer].label}>{layerItems.map(({ feature }) => <option key={feature.id} value={feature.id}>{feature.properties.name} · {POSITION_LABELS[feature.properties.positionKind]}</option>)}</optgroup>;
         })}
       </select>
     </label>}
-    {!ready && !fallback && <div className="economic-map-message" role="status"><span className="economic-map-loading" />正在展开全球视野</div>}
-    {basemapError && <div className="economic-map-message is-error" role="status">底图暂不可用，可继续通过快讯列表浏览</div>}
-    <div className="economic-map-controls" aria-label="地图控制">
-      <button type="button" onClick={() => zoomBy(0.7)} aria-label="放大地图" title="放大地图"><Plus size={17} /></button>
-      <button type="button" onClick={() => zoomBy(-0.7)} aria-label="缩小地图" title="缩小地图"><Minus size={17} /></button>
+    {!ready && !fallback && <div className="economic-map-message" role="status"><span className="economic-map-loading" />Loading the global view</div>}
+    {basemapError && <div className="economic-map-message is-error" role="status">The base map is unavailable. You can continue browsing the news feed.</div>}
+    <div className="economic-map-controls" aria-label="Map controls">
+      <button type="button" onClick={() => zoomBy(0.7)} aria-label="Zoom in" title="Zoom in"><Plus size={17} /></button>
+      <button type="button" onClick={() => zoomBy(-0.7)} aria-label="Zoom out" title="Zoom out"><Minus size={17} /></button>
       <span />
-      <button type="button" onClick={resetView} aria-label="恢复全球视角" title="恢复全球视角"><LocateFixed size={17} /></button>
+      <button type="button" onClick={resetView} aria-label="Reset global view" title="Reset global view"><LocateFixed size={17} /></button>
     </div>
     <div className="economic-map-coordinate" aria-hidden="true">{Math.abs(camera.latitude).toFixed(1)}° {camera.latitude >= 0 ? "N" : "S"}<span />{Math.abs(camera.longitude).toFixed(1)}° {camera.longitude >= 0 ? "E" : "W"}</div>
     <div className="economic-map-attribution">
-      {fallback && <span>兼容模式 · </span>}<a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a><span> · {features.length ? "位置与路线性质见详情" : "地点提及 ≠ 事件定位"}</span>
+      {fallback && <span>Compatibility mode · </span>}<a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a><span> · {features.length ? "See details for position and route types" : "Place mentions ≠ event locations"}</span>
     </div>
   </div>;
 }

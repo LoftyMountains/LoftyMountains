@@ -21,16 +21,16 @@ export function useEconomicSnapshot(hours: number) {
       setRefreshing(true);
       try {
         const response = await fetch(apiUrl(`/api/economy?hours=${hours}`), { signal, cache: "no-store" });
-        if (!response.ok) throw new Error(`经济消息暂时无法更新（${response.status}）`);
+        if (!response.ok) throw new Error(`News update failed (${response.status})`);
         const payload = await response.json() as EconomicSnapshot;
-        if (!Array.isArray(payload.items) || !Array.isArray(payload.sources) || !payload.coverage) throw new Error("经济消息返回格式异常");
+        if (!Array.isArray(payload.items) || !Array.isArray(payload.sources) || !payload.coverage) throw new Error("Invalid news response format");
         if (!cancelled) {
           setSnapshot(payload);
           setSnapshotHours(hours);
           setError(null);
         }
       } catch (failure) {
-        if (!cancelled) setError(failure instanceof Error && failure.name !== "AbortError" ? failure.message : "请求超时，请重试");
+        if (!cancelled) setError(failure instanceof Error && failure.name !== "AbortError" ? failure.message : "Request timed out. Please try again.");
       } finally {
         window.clearTimeout(timeout);
         controller = null;

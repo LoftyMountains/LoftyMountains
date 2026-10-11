@@ -1,7 +1,7 @@
 .economic-spatial-layers { border-bottom: 1px solid var(--econ-line); margin-bottom: 16px; padding-bottom: 12px; }
 .economic-spatial-list { padding: 0 8px; }
-.economic-spatial-toggle { min-height: 49px; height: auto; padding-block: 8px; }
-.economic-spatial-name { display: flex; flex-direction: column; gap: 4px; color: #c8d4dc; font-size: 11px; }
+.economic-layer.economic-spatial-toggle { min-height: 49px; height: auto; padding-block: 8px; }
+.economic-spatial-name { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; color: #c8d4dc; font-size: 11px; line-height: 1.4; }
 .economic-spatial-name small { color: #8097a6; font-size: 9px; }
 .economic-spatial-state { display: flex; align-items: center; gap: 5px; padding: 0 9px 6px 38px; font-size: 8px; color: #8bbdad; }
 .economic-spatial-state i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
@@ -11,8 +11,9 @@
 .economic-spatial-notice { font-size: 10px; line-height: 1.6; color: #c7b894; margin: 5px 12px 12px; }
 .economic-map-legend { position: absolute; z-index: 11; left: 290px; bottom: 151px; width: 185px; padding: 10px 12px; pointer-events: none; }
 .economic-map-legend > strong { display: block; font-size: 9px; font-weight: 500; letter-spacing: 1px; color: #8e9eaa; margin-bottom: 8px; }
-.economic-map-legend > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 4px; }
-.economic-map-legend > div > span { display: flex; gap: 5px; align-items: center; font-size: 9px; color: #b6c4cf; white-space: nowrap; }
+.economic-map-legend > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 4px; }
+.economic-map-legend > div > span { display: flex; gap: 5px; align-items: center; font-size: 9px; color: #b6c4cf; line-height: 1.4; }
+.economic-map-legend svg, .economic-legend-count { flex-shrink: 0; }
 .economic-map-legend > small { display: block; font-size: 8px; color: #8b9ca9; margin-top: 9px; line-height: 1.6; }
 .economic-legend-count { display: grid; place-items: center; width: 13px; height: 13px; color: #d6b779; border: 1px solid #d6b779; border-radius: 50%; font: 8px var(--econ-mono); }
 .economic-map-facts { font-size: 11px; margin: 20px 0 10px; }

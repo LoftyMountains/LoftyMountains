@@ -2,11 +2,11 @@ import type { Feature, FeatureCollection, Geometry, Position } from "geojson";
 import type { MapCoordinate, MapFeature, MapGeometry, MapLayerId } from "../../shared/types";
 
 export const OVERLAY_LAYERS: Record<MapLayerId, { label: string; color: string; icon: string }> = {
-  weather: { label: "气象", color: "#75d6ec", icon: "M6 16a4 4 0 0 1-1-7.9 6 6 0 0 1 11.3-1.6A4.8 4.8 0 0 1 18 16 M12 13l-3 5h4l-2 4" },
-  aviation: { label: "航空", color: "#89baf4", icon: "M12 2l2 7 7 4v2l-7-2v5l3 2v2l-5-2-5 2v-2l3-2v-5l-7 2v-2l7-4z" },
-  maritime: { label: "航运", color: "#7acbb0", icon: "M8 10V5h8v5M12 2v3M3 12l9-3 9 3-4 7H7zM2 22l3-2 4 2 3-2 3 2 4-2 3 2" },
-  satellites: { label: "卫星", color: "#c5a1f5", icon: "M9 7l8 8-4 4-8-8zM12 4l4-4 8 8-4 4zM0 16l4-4 8 8-4 4zM16 16l4 4M19 14a5 5 0 0 1 3 3" },
-  health: { label: "公共卫生", color: "#eea1b8", icon: "M9 3h6v6h6v6h-6v6H9v-6H3V9h6z" },
+  weather: { label: "Weather", color: "#75d6ec", icon: "M6 16a4 4 0 0 1-1-7.9 6 6 0 0 1 11.3-1.6A4.8 4.8 0 0 1 18 16 M12 13l-3 5h4l-2 4" },
+  aviation: { label: "Aviation", color: "#89baf4", icon: "M12 2l2 7 7 4v2l-7-2v5l3 2v2l-5-2-5 2v-2l3-2v-5l-7 2v-2l7-4z" },
+  maritime: { label: "Shipping", color: "#7acbb0", icon: "M8 10V5h8v5M12 2v3M3 12l9-3 9 3-4 7H7zM2 22l3-2 4 2 3-2 3 2 4-2 3 2" },
+  satellites: { label: "Satellites", color: "#c5a1f5", icon: "M9 7l8 8-4 4-8-8zM12 4l4-4 8 8-4 4zM0 16l4-4 8 8-4 4zM16 16l4 4M19 14a5 5 0 0 1 3 3" },
+  health: { label: "Public health", color: "#eea1b8", icon: "M9 3h6v6h6v6h-6v6H9v-6H3V9h6z" },
 };
 
 export const WEATHER_ICONS: Record<string, string> = {
@@ -33,10 +33,10 @@ export function overlayIcon(feature: MapFeature): { key: string; path: string } 
 }
 
 export const POSITION_LABELS: Record<MapFeature["properties"]["positionKind"], string> = {
-  "source-reported": "来源报告位置",
-  "reference-route": "静态参考路线",
-  predicted: "轨道预测地面投影",
-  "approximate-region": "涉及地区参考位置",
+  "source-reported": "Source-reported position",
+  "reference-route": "Static reference route",
+  predicted: "Predicted ground position",
+  "approximate-region": "Approximate regional position",
 };
 
 export interface OverlayProperties {
