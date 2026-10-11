@@ -1,4 +1,4 @@
-export type SourceId = "cls" | "wallstreetcn" | "jin10" | "eastmoney" | "sina";
+export type SourceId = "cls" | "wallstreetcn" | "jin10" | "eastmoney" | "sina" | "fed" | "ecb" | "nbs" | "bea" | "boe" | "bbc";
 
 export type EconomicCategory = "macro" | "monetary" | "markets" | "trade" | "energy" | "industry";
 
@@ -51,6 +51,11 @@ export interface EconomicReferencePoint {
 }
 
 export interface EconomicSnapshot {
+  storage?: {
+    state: "normal" | "warning" | "paused";
+    message: string;
+    persistencePaused: boolean;
+  };
   generatedAt: string;
   from: string;
   to: string;
@@ -356,6 +361,9 @@ export interface SourceStatus {
   lastSuccessAt: string | null;
   latencyMs: number | null;
   message: string | null;
+  kind?: "official" | "newsroom";
+  homepage?: string;
+  description?: string;
 }
 
 export interface RuntimeInfo {

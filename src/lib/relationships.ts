@@ -22,6 +22,12 @@ export const confidenceRank: Record<AnalysisLink["confidence"], number> = {
 };
 
 export const sourceLabels = {
+  fed: "美联储",
+  ecb: "欧洲央行",
+  nbs: "国家统计局",
+  bea: "美国经济分析局",
+  boe: "英格兰银行",
+  bbc: "BBC 商业",
   cls: "财联社",
   wallstreetcn: "华尔街见闻",
   jin10: "金十数据",
