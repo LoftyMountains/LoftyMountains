@@ -5,6 +5,8 @@ export interface IntelligenceSourceDefinition {
   id: string;
   label: string;
   publisher: string;
+  /** Language of the upstream news product; structured/map-only products omit it. */
+  language?: "en" | "zh";
   role: IntelligenceSourceRole;
   domains: EconomicCategory[];
   homepage: string;

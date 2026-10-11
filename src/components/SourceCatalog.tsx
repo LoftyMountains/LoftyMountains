@@ -93,7 +93,7 @@ function SourceEntry({ source, expanded, onToggle }: { source: IntelligenceSourc
     <button type="button" className="source-catalog-entry-toggle" aria-expanded={expanded} aria-controls={`source-detail-${source.id}`} onClick={onToggle}>
       <span className="source-entry-top"><strong>{source.label}</strong><span className={`source-health is-${source.health.state}`}><i />{stateLabels[source.health.state]}</span><ChevronRight size={15} className={expanded ? "is-open" : ""} /></span>
       <span className="source-entry-publisher">{source.publisher}</span><span className="source-entry-coverage">{source.coverage}</span>
-      <span className="source-entry-tags"><span>{source.evidenceLabel}</span><span>{source.products.map(product => productLabels[product]).join(" · ")}</span></span>
+      <span className="source-entry-tags"><span>{source.evidenceLabel}</span><span>{source.products.map(product => productLabels[product]).join(" · ")}</span>{source.products.includes("news") && source.language === "en" ? <span>英文来源</span> : null}</span>
     </button>
     {expanded ? <div className="source-entry-detail" id={`source-detail-${source.id}`}>
       <dl><div><dt>最新原始记录时间</dt><dd>{stamp(source.health.latestRecordAt)}</dd></div><div><dt>最近成功采集时间</dt><dd>{stamp(source.health.lastSuccessAt)}</dd></div><div><dt>最近检查时间</dt><dd>{stamp(source.health.checkedAt)}</dd></div><div><dt>计划更新间隔</dt><dd>{interval(source.refreshIntervalMs)}</dd></div>{source.health.itemCount !== null ? <div><dt>当前记录数</dt><dd>{source.health.itemCount.toLocaleString()}</dd></div> : null}</dl>
