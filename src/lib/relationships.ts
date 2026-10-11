@@ -22,6 +22,10 @@ export const confidenceRank: Record<AnalysisLink["confidence"], number> = {
 };
 
 export const sourceLabels = {
+  eia: "美国能源信息署",
+  bls: "美国劳工统计局",
+  wto: "世界贸易组织",
+  pboc: "中国人民银行",
   fed: "美联储",
   ecb: "欧洲央行",
   nbs: "国家统计局",

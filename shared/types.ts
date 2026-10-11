@@ -1,4 +1,57 @@
-export type SourceId = "cls" | "wallstreetcn" | "jin10" | "eastmoney" | "sina" | "fed" | "ecb" | "nbs" | "bea" | "boe" | "bbc" | "gdacs" | "nhc" | "eonet" | "panama" | "eurocontrol" | "who-don" | "cdc-travel";
+export type SourceId = "cls" | "wallstreetcn" | "jin10" | "eastmoney" | "sina" | "fed" | "ecb" | "nbs" | "bea" | "boe" | "bbc" | "gdacs" | "nhc" | "eonet" | "panama" | "eurocontrol" | "who-don" | "cdc-travel" | "eia" | "bls" | "wto" | "pboc";
+
+export type IntelligenceSourceRole = "primary" | "reporting" | "observation" | "model" | "reference";
+export interface IntelligenceSourceDefinition {
+  id: string;
+  label: string;
+  publisher: string;
+  role: IntelligenceSourceRole;
+  domains: EconomicCategory[];
+  homepage: string;
+  endpoint: string | null;
+  transport: "rss" | "json" | "api" | "static" | "derived";
+  refreshIntervalMs: number | null;
+  products: Array<"news" | "map" | "markets">;
+  evidenceLabel: string;
+  coverage: string;
+  limitations: string;
+  access: "public" | "public-limited" | "reference";
+  termsUrl?: string;
+}
+export interface IntelligenceSourceHealth {
+  state: "current" | "delayed" | "unavailable" | "pending" | "reference";
+  checkedAt: string | null;
+  lastSuccessAt: string | null;
+  latestRecordAt: string | null;
+  itemCount: number | null;
+  message: string;
+}
+export interface IntelligenceSourceEntry extends IntelligenceSourceDefinition {
+  health: IntelligenceSourceHealth;
+}
+export interface IntelligenceSourcesSnapshot {
+  generatedAt: string;
+  persisted: false;
+  sources: IntelligenceSourceEntry[];
+  methodology: string;
+}
+export interface NewsEvidence {
+  sourceId: string;
+  recordId: string;
+  kind: "primary-release" | "media-report" | "aggregated-event";
+  publishedAt: string;
+  timeKind: "published" | "observation" | "record";
+  lastRetrievedAt: string | null;
+  originalUrl: string | null;
+  transformations: Array<{ id: string; label: string }>;
+  entities: Array<{
+    id: string;
+    type: "region" | "security";
+    label: string;
+    relationship: "mentions" | "publisher-tagged";
+    matchedTerms: string[];
+  }>;
+}
 
 export type EconomicCategory = "macro" | "monetary" | "markets" | "trade" | "energy" | "industry" | "weather" | "transport" | "satellite" | "health";
 
@@ -30,6 +83,8 @@ export interface MapFeature {
     heading?: number;
     severity?: "low" | "medium" | "high";
     relatedNewsId?: string;
+    /** Current records used by an aggregate; these are not independent confirmations. */
+    evidenceLinks?: Array<{ newsId: string; sourceId: string; label: string; url: string; publishedAt: string }>;
     details?: { label: string; value: string }[];
   };
 }
@@ -86,6 +141,7 @@ export interface EconomicLocation {
 export interface EconomicNewsItem extends FeedNewsItem {
   categories: EconomicCategory[];
   locations: EconomicLocation[];
+  evidence?: NewsEvidence;
 }
 
 export interface EconomicReferencePoint {
@@ -408,6 +464,7 @@ export interface SourceStatus {
   state: "live" | "delayed" | "offline" | "polling";
   itemCount: number;
   lastSuccessAt: string | null;
+  lastAttemptAt?: string | null;
   latencyMs: number | null;
   message: string | null;
   kind?: "official" | "newsroom";
