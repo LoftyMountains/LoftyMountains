@@ -1,4 +1,4 @@
-export type SourceId = "cls" | "wallstreetcn" | "jin10" | "eastmoney" | "sina" | "fed" | "ecb" | "nbs" | "bea" | "boe" | "bbc" | "gdacs" | "nhc" | "eonet" | "panama" | "eurocontrol" | "who-don" | "cdc-travel" | "eia" | "bls" | "wto" | "pboc";
+export type SourceId = "cls" | "wallstreetcn" | "jin10" | "eastmoney" | "sina" | "fed" | "ecb" | "nbs" | "bea" | "boe" | "bbc" | "cnbc" | "ft" | "wsj" | "gdacs" | "nhc" | "eonet" | "panama" | "eurocontrol" | "who-don" | "cdc-travel" | "eia" | "bls" | "wto" | "pboc";
 
 export type IntelligenceSourceRole = "primary" | "reporting" | "observation" | "model" | "reference";
 export interface IntelligenceSourceDefinition {
