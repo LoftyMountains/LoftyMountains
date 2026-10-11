@@ -208,6 +208,7 @@ svg { flex-shrink: 0; }
 .economic-market-quote:hover { background: #1a283466; }
 .economic-quote-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .economic-quote-main > span { font-size: 10px; color: #879dad; white-space: nowrap; }
+.economic-market-quote .economic-quote-main > span { overflow: hidden; text-overflow: ellipsis; }
 .economic-quote-main > strong { font: 500 14px var(--econ-mono); color: #d1dce4; }
 .economic-quote-change { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 1px; min-width: 61px; }
 .economic-quote-change > span { display: flex; align-items: center; gap: 1px; font: 9px var(--econ-mono); color: #82939e; }
