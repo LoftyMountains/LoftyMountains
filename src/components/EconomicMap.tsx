@@ -4,13 +4,19 @@ import { LocateFixed, Minus, Plus } from "lucide-react";
 import maplibregl from "maplibre-gl/dist/maplibre-gl-csp.js";
 import type { Map as MapLibreMap, Marker } from "maplibre-gl";
 import type { FeatureCollection, Geometry, MultiPolygon, Polygon } from "geojson";
-import type { EconomicLocation, EconomicNewsItem, EconomicReferencePoint } from "../../shared/types";
+import type { EconomicLocation, EconomicNewsItem, EconomicReferencePoint, MapFeature, MapLayerId } from "../../shared/types";
+import { OVERLAY_LAYERS, POSITION_LABELS, isOverlayShapeVisible, overlayIcon, prepareOverlays } from "../lib/map-overlays";
+import { installOverlayLayers, OVERLAY_HIT_LAYERS, updateOverlayLayers } from "../lib/map-overlay-layers";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./economy-map.css";
+import "./map-overlays.css";
 
 export interface EconomicMapProps {
   items: EconomicNewsItem[];
   referencePoints: EconomicReferencePoint[];
+  features: MapFeature[];
+  selectedFeatureId: string | null;
+  onSelectFeature: (id: string) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onSelectReference: (point: EconomicReferencePoint) => void;
@@ -75,20 +81,26 @@ function sphericalGeometry(geometry: Geometry): Geometry {
   return geometry;
 }
 
-export function EconomicMap({ items, referencePoints, selectedId, onSelect, onSelectReference, projection, focus }: EconomicMapProps) {
+export function EconomicMap({ items, referencePoints, features, selectedFeatureId, onSelectFeature, selectedId, onSelect, onSelectReference, projection, focus }: EconomicMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef(new Map<string, Marker>());
-  const callbacksRef = useRef({ onSelect, onSelectReference });
-  callbacksRef.current = { onSelect, onSelectReference };
+  const callbacksRef = useRef({ onSelect, onSelectReference, onSelectFeature });
+  callbacksRef.current = { onSelect, onSelectReference, onSelectFeature };
   const [ready, setReady] = useState(false);
   const [fallback, setFallback] = useState(false);
   const [basemapError, setBasemapError] = useState(false);
   const [camera, setCamera] = useState(HOME);
   const [size, setSize] = useState({ width: 1200, height: 700 });
   const [countries, setCountries] = useState<FeatureCollection | null>(null);
+  const [hoveredFeature, setHoveredFeature] = useState<{ id: string; x: number; y: number } | null>(null);
   const dragRef = useRef<{ x: number; y: number; longitude: number; latitude: number } | null>(null);
   const mentions = useMemo(() => aggregateMentions(items), [items]);
+  const overlays = useMemo(() => prepareOverlays(features, selectedFeatureId), [features, selectedFeatureId]);
+  const overlayRef = useRef(overlays);
+  overlayRef.current = overlays;
+  const overlayById = useMemo(() => new Map(overlays.map((overlay) => [overlay.feature.id, overlay])), [overlays]);
+  const hoveredOverlay = hoveredFeature ? overlayById.get(hoveredFeature.id) : undefined;
   const mentionRef = useRef(mentions);
   const referenceRef = useRef(referencePoints);
   mentionRef.current = mentions;
@@ -140,7 +152,7 @@ export function EconomicMap({ items, referencePoints, selectedId, onSelect, onSe
       });
       mapRef.current = map;
       map.touchZoomRotate.disableRotation();
-      map.getCanvas().setAttribute("aria-label", "全球经济地图。方向键平移，加减键缩放；也可通过快讯列表查看全部信息。");
+      map.getCanvas().setAttribute("aria-label", "全球情报地图。方向键平移，加减键缩放；使用地图实体选择器或快讯列表查看全部信息。");
       loadDeadline = window.setTimeout(() => { if (!disposed) setFallback(true); }, 15_000);
       map.on("load", () => {
         window.clearTimeout(loadDeadline);
@@ -151,6 +163,7 @@ export function EconomicMap({ items, referencePoints, selectedId, onSelect, onSe
         const center = map.getCenter();
         setCamera({ longitude: center.lng, latitude: center.lat, zoom: map.getZoom() });
       });
+      map.on("movestart", () => setHoveredFeature(null));
       map.on("error", (event) => {
         if (disposed) return;
         console.warn("Economic map:", event.error?.message);
@@ -196,7 +209,11 @@ export function EconomicMap({ items, referencePoints, selectedId, onSelect, onSe
   }, [fallback]);
 
   useEffect(() => {
-    if (ready && !fallback) mapRef.current?.setProjection({ type: projection });
+    if (ready && !fallback) {
+      mapRef.current?.setProjection({ type: projection });
+      // A flat map must wrap to centre the Pacific and expose both sides of ±180°.
+      mapRef.current?.setRenderWorldCopies(projection === "mercator");
+    }
   }, [projection, ready, fallback]);
 
   useEffect(() => {
@@ -205,6 +222,49 @@ export function EconomicMap({ items, referencePoints, selectedId, onSelect, onSe
     if (fallback) setCamera(next);
     else if (ready) mapRef.current?.flyTo({ center: [next.longitude, next.latitude], zoom: next.zoom, duration: reducedMotion() ? 0 : 900 });
   }, [focus, fallback, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || fallback) return;
+    installOverlayLayers(map);
+    updateOverlayLayers(map, overlayRef.current);
+    const pick = (point: { x: number; y: number }) => {
+      // Prefer a point over the large polygon or route underneath it.
+      const hits = map.queryRenderedFeatures([point.x, point.y], { layers: OVERLAY_HIT_LAYERS });
+      const pointHit = hits.find((hit) => hit.layer.id === "overlay-icons" || hit.layer.id === "overlay-point-halo");
+      const id = (pointHit ?? hits[0])?.properties?.entityId;
+      return typeof id === "string" ? id : null;
+    };
+    const click = (event: { point: { x: number; y: number } }) => {
+      const id = pick(event.point);
+      if (id) callbacksRef.current.onSelectFeature(id);
+    };
+    const move = (event: { point: { x: number; y: number } }) => {
+      const id = pick(event.point);
+      map.getCanvas().style.cursor = id ? "pointer" : "";
+      setHoveredFeature((current) => current?.id === id ? current : id ? { id, x: event.point.x, y: event.point.y } : null);
+    };
+    const leave = () => setHoveredFeature(null);
+    map.on("click", click);
+    map.on("mousemove", move);
+    map.getCanvas().addEventListener("mouseleave", leave);
+    return () => {
+      if (mapRef.current !== map) return;
+      map.off("click", click);
+      map.off("mousemove", move);
+      map.getCanvas().removeEventListener("mouseleave", leave);
+      // React StrictMode can re-run effects against the same loaded map.
+      for (const id of ["overlay-icons", "overlay-point-halo", "overlay-line-hit", "overlay-line-reference", "overlay-line-solid", "overlay-line-glow", "overlay-area"]) {
+        if (map.getLayer(id)) map.removeLayer(id);
+      }
+      for (const id of ["overlay-points", "overlay-shapes"]) if (map.getSource(id)) map.removeSource(id);
+    };
+  }, [ready, fallback]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map && ready && !fallback) updateOverlayLayers(map, overlays);
+  }, [overlays, ready, fallback]);
 
   // Reconcile marker elements in place: feed updates never recreate the map or move its camera.
   useEffect(() => {
@@ -285,7 +345,7 @@ export function EconomicMap({ items, referencePoints, selectedId, onSelect, onSe
         .rotate([-camera.longitude, -camera.latitude]).clipAngle(90);
     }
     return geoMercator().translate([width / 2, height / 2]).scale(Math.min(width / 6.4, height / 4) * zoomFactor)
-      .center([camera.longitude, camera.latitude]).clipExtent([[0, 0], [width, height]]);
+      .rotate([-camera.longitude, 0]).center([0, camera.latitude]).clipExtent([[0, 0], [width, height]]);
   }, [camera, projection, size]);
   const fallbackPath = useMemo(() => geoPath(fallbackProjection), [fallbackProjection]);
   function project(longitude: number, latitude: number) {
@@ -331,6 +391,31 @@ export function EconomicMap({ items, referencePoints, selectedId, onSelect, onSe
         <path className="economic-fallback-ocean" d={fallbackPath({ type: "Sphere" }) ?? ""} />
         <path className="economic-fallback-grid" d={fallbackPath(GRATICULE) ?? ""} />
         {countries?.features.map((feature, index) => <path className="economic-fallback-country" key={index} d={fallbackPath(feature) ?? ""} />)}
+        {[...overlays].sort((a, b) => Number(a.properties.selected) - Number(b.properties.selected)).map((overlay) => {
+          if (!isOverlayShapeVisible(overlay)) return null;
+          const polygon = overlay.geometry.type === "Polygon" || overlay.geometry.type === "MultiPolygon";
+          const path = fallbackPath(sphericalGeometry(overlay.geometry));
+          if (!path) return null;
+          return <g key={`shape:${overlay.feature.id}`} className={`map-overlay-shape${overlay.properties.selected ? " is-selected" : ""}`} style={{ color: overlay.properties.color }}
+            onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onSelectFeature(overlay.feature.id); }}>
+            <title>{overlay.feature.properties.name} · {POSITION_LABELS[overlay.feature.properties.positionKind]}</title>
+            <path d={path} className={polygon ? "map-overlay-area" : "map-overlay-line"} strokeDasharray={overlay.properties.dashed ? "6 4" : undefined} />
+            {!polygon && <path d={path} className="map-overlay-line-target" />}
+          </g>;
+        })}
+        {[...overlays].sort((a, b) => Number(a.properties.selected) - Number(b.properties.selected)).map((overlay) => {
+          const position = project(...overlay.feature.properties.anchor);
+          if (!position) return null;
+          return <g key={`anchor:${overlay.feature.id}`} className={`map-overlay-anchor${overlay.properties.selected ? " is-selected" : ""}${overlay.properties.approximate ? " is-region" : ""}`}
+            transform={`translate(${position[0]},${position[1]})`} style={{ color: overlay.properties.color }}
+            onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onSelectFeature(overlay.feature.id); }}>
+            <title>{overlay.feature.properties.name} · {POSITION_LABELS[overlay.feature.properties.positionKind]}</title>
+            {overlay.properties.selected && <circle className="map-overlay-anchor-halo" r={23} />}
+            <circle className="map-overlay-anchor-disc" r={14} />
+            <path className="map-overlay-anchor-icon" d={overlayIcon(overlay.feature).path}
+              transform={`rotate(${overlay.properties.heading}) translate(-9,-9) scale(.75)`} />
+          </g>;
+        })}
       </svg>
       {referencePoints.map((point) => {
         const position = project(point.longitude, point.latitude);
@@ -349,6 +434,21 @@ export function EconomicMap({ items, referencePoints, selectedId, onSelect, onSe
       })}
     </div>}
     <div className="economic-map-vignette" aria-hidden="true" />
+    {hoveredOverlay && hoveredFeature && !fallback && <div className="map-overlay-tooltip" role="tooltip"
+      style={{ left: Math.max(12, Math.min(size.width - 264, hoveredFeature.x + 20)), top: Math.max(12, Math.min(size.height - 76, hoveredFeature.y + 18)), borderColor: hoveredOverlay.properties.color }}>
+      <strong>{hoveredOverlay.feature.properties.name}</strong>
+      <span>{OVERLAY_LAYERS[hoveredOverlay.feature.properties.layer].label} · {POSITION_LABELS[hoveredOverlay.feature.properties.positionKind]}</span>
+    </div>}
+    {overlays.length > 0 && <label className="map-overlay-selector">
+      <span>地图实体 <b>{overlays.length}</b></span>
+      <select aria-label="选择地图实体查看详情" value={selectedFeatureId && overlayById.has(selectedFeatureId) ? selectedFeatureId : ""} onChange={(event) => { if (event.target.value) onSelectFeature(event.target.value); }}>
+        <option value="" disabled>选择对象查看位置与来源</option>
+        {(Object.keys(OVERLAY_LAYERS) as MapLayerId[]).map((layer) => {
+          const layerItems = overlays.filter((overlay) => overlay.feature.properties.layer === layer);
+          return layerItems.length > 0 && <optgroup key={layer} label={OVERLAY_LAYERS[layer].label}>{layerItems.map(({ feature }) => <option key={feature.id} value={feature.id}>{feature.properties.name} · {POSITION_LABELS[feature.properties.positionKind]}</option>)}</optgroup>;
+        })}
+      </select>
+    </label>}
     {!ready && !fallback && <div className="economic-map-message" role="status"><span className="economic-map-loading" />正在展开全球视野</div>}
     {basemapError && <div className="economic-map-message is-error" role="status">底图暂不可用，可继续通过快讯列表浏览</div>}
     <div className="economic-map-controls" aria-label="地图控制">
@@ -359,7 +459,7 @@ export function EconomicMap({ items, referencePoints, selectedId, onSelect, onSe
     </div>
     <div className="economic-map-coordinate" aria-hidden="true">{Math.abs(camera.latitude).toFixed(1)}° {camera.latitude >= 0 ? "N" : "S"}<span />{Math.abs(camera.longitude).toFixed(1)}° {camera.longitude >= 0 ? "E" : "W"}</div>
     <div className="economic-map-attribution">
-      {fallback && <span>兼容模式 · </span>}<a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a><span> · 地点提及 ≠ 事件定位</span>
+      {fallback && <span>兼容模式 · </span>}<a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a><span> · {features.length ? "位置与路线性质见详情" : "地点提及 ≠ 事件定位"}</span>
     </div>
   </div>;
 }

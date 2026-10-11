@@ -1,7 +1,11 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Anchor, Building2, Check, ChevronDown, ChevronRight, CircleHelp, CloudLightning, Crosshair, ExternalLink, Factory, Globe2, Landmark, Layers3, Map as MapIcon, MapPin, Newspaper, Radio, RefreshCw, Satellite, ShieldPlus, Ship, Search, ShieldCheck, SlidersHorizontal, Star, TrendingUp, Waves, X, Zap } from "lucide-react";
-import type { EconomicCategory, EconomicNewsItem, EconomicReferencePoint } from "../shared/types";
+import type { EconomicCategory, EconomicNewsItem, EconomicReferencePoint, MapLayerId } from "../shared/types";
 import { useEconomicSnapshot } from "./hooks/useEconomicSnapshot";
+import { useMapOverlays } from "./hooks/useMapOverlays";
+import { MapLayerPanel, MapLegend, mapLayers } from "./components/MapLayerPanel";
+import { MapFeatureDetail } from "./components/MapFeatureDetail";
+import "./map-layers.css";
 import { EconomicMarkets } from "./components/EconomicMarkets";
 import { formatClock, formatFull, relativeTime } from "./lib/time";
 
@@ -41,6 +45,10 @@ function safeUrl(value: string | null | undefined) {
 export function App() {
   const hours = 24;
   const { snapshot, error, refreshing, refresh, revision } = useEconomicSnapshot(hours);
+  const overlays = useMapOverlays();
+  const [enabledMapLayers, setEnabledMapLayers] = useState<Set<MapLayerId>>(() => new Set(mapLayers.map(layer => layer.id)));
+  const [newsMapVisible, setNewsMapVisible] = useState(false);
+  const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
   const [enabledCategories, setEnabledCategories] = useState<Set<EconomicCategory>>(() => new Set(categories.map((entry) => entry.id)));
   const [enabledReferences, setEnabledReferences] = useState<Set<EconomicReferencePoint["kind"]>>(() => new Set(["financial-center", "port", "chokepoint"]));
   const [query, setQuery] = useState("");
@@ -75,6 +83,13 @@ export function App() {
       && (source === "all" || item.source === source) && (!importantOnly || item.important)
       && (!text || `${item.title} ${item.content} ${item.tags.join(" ")} ${item.locations.map((location) => location.label).join(" ")}`.toLocaleLowerCase().includes(text)));
   }, [snapshot, enabledCategories, source, importantOnly, query]);
+  const mapTimeBucket = Math.floor(now / 30_000);
+  const mapFeatures = useMemo(() => (overlays.snapshot?.features || []).filter(feature => {
+    if (!enabledMapLayers.has(feature.properties.layer)) return false;
+    const time = feature.properties.layer === "aviation" ? feature.properties.sourceTime : feature.properties.layer === "satellites" ? feature.properties.positionTime : null;
+    return !time || mapTimeBucket * 30_000 - Date.parse(time) <= 20 * 60_000;
+  }), [overlays.snapshot, enabledMapLayers, mapTimeBucket]);
+  const selectedFeature = mapFeatures.find(feature => feature.id === selectedFeatureId) || null;
   const references = useMemo(() => (snapshot?.referencePoints || []).filter((point) => enabledReferences.has(point.kind)), [snapshot, enabledReferences]);
   const selected = items.find((item) => item.id === selectedId) || null;
   const locatedCount = items.filter((item) => item.locations.length > 0).length;
@@ -90,7 +105,7 @@ export function App() {
   const statusLabel = !snapshot ? (error ? "连接异常" : "正在连接") : stale ? "更新延迟" : sourceCount === 0 ? "等待数据源" : "持续观测";
   const activeFilters = query.trim() || source !== "all" || importantOnly || enabledCategories.size !== categories.length;
 
-  function closeDetail() { setSelectedId(null); setReference(null); lastFocusRef.current?.focus(); }
+  function closeDetail() { setSelectedId(null); setSelectedFeatureId(null); setReference(null); lastFocusRef.current?.focus(); }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -99,7 +114,7 @@ export function App() {
       if (event.key === "/" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault(); setMobilePanel("feed"); setFeedOpen(true); window.setTimeout(() => searchRef.current?.focus(), 0);
       }
-      if (event.key === "Escape") { setSelectedId(null); setReference(null); setAboutOpen(false); lastFocusRef.current?.focus(); }
+      if (event.key === "Escape") { setSelectedId(null); setSelectedFeatureId(null); setReference(null); setAboutOpen(false); lastFocusRef.current?.focus(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -109,16 +124,32 @@ export function App() {
 
   function selectItem(id: string) {
     lastFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setSelectedId(id); setReference(null);
+    setSelectedId(id); setReference(null); setSelectedFeatureId(null);
     const location = items.find((item) => item.id === id)?.locations[0];
     if (location) { setFocus({ longitude: location.longitude, latitude: location.latitude, zoom: 2.7, key: Date.now() }); setPreset(""); }
   }
 
   function selectReference(point: EconomicReferencePoint) {
     lastFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setReference(point); setSelectedId(null); setPreset("");
+    setReference(point); setSelectedId(null); setSelectedFeatureId(null); setPreset("");
     setFocus({ longitude: point.longitude, latitude: point.latitude, zoom: 2.7, key: Date.now() });
   }
+
+  function selectMapFeature(id: string) {
+    const feature = mapFeatures.find(feature => feature.id === id);
+    if (!feature) return;
+    lastFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setSelectedFeatureId(id); setSelectedId(null); setReference(null); setPreset(""); setMobilePanel("map");
+    setFocus({ longitude: feature.properties.anchor[0], latitude: feature.properties.anchor[1], zoom: feature.properties.layer === "satellites" ? 2.1 : 3, key: Date.now() });
+  }
+  function openMapNews(id: string) {
+    setQuery(""); setSource("all"); setImportantOnly(false); setEnabledCategories(new Set(categories.map(entry => entry.id)));
+    setSelectedFeatureId(null); setSelectedId(id); setReference(null);
+  }
+  function toggleMapLayer(id: MapLayerId) {
+    setEnabledMapLayers(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  }
+  function refreshAll() { refresh(); overlays.refresh(); }
 
   function toggleCategory(id: EconomicCategory) {
     setEnabledCategories((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
@@ -126,28 +157,30 @@ export function App() {
   function resetFilters() { setQuery(""); setSource("all"); setImportantOnly(false); setEnabledCategories(new Set(categories.map((entry) => entry.id))); }
   const detailUrl = safeUrl(selected?.url || reference?.sourceUrl);
 
-  return <main className={`economic-app mobile-${mobilePanel} ${layersOpen ? "" : "is-layers-collapsed"} ${feedOpen ? "" : "is-feed-collapsed"}`}>
+  return <main className={`economic-app ${selectedFeature ? "has-map-detail" : ""} mobile-${mobilePanel} ${layersOpen ? "" : "is-layers-collapsed"} ${feedOpen ? "" : "is-feed-collapsed"}`}>
     <header className="economic-header">
       <a className="economic-brand" href="#" aria-label="景行全球经济情报首页" onClick={(event) => { event.preventDefault(); resetFilters(); closeDetail(); setMobilePanel("map"); setPreset("全球"); setFocus({ ...presets[0], key: Date.now() }); }}><span className="economic-brand-symbol" aria-hidden="true"><i /><i /><i /></span><span><strong>景行<span>JINGXING</span></strong><small>GLOBAL ECONOMIC INTELLIGENCE</small></span></a>
       <div className="economic-header-divider" /><span className="economic-product-label">全球经济情报</span>
-      <div className="economic-header-end"><span className={`economic-connection ${stale || !sourceCount ? "is-delayed" : ""}`} role="status"><i />{statusLabel}</span><div className="economic-header-clock"><time dateTime={new Date(now).toISOString()}>{formatClock(now)}</time><span>北京时间 UTC+8</span></div><button type="button" className={`economic-icon-button ${refreshing ? "is-refreshing" : ""}`} aria-label={refreshing ? "正在刷新" : "刷新全部数据"} title="刷新全部数据" disabled={refreshing} onClick={refresh}><RefreshCw size={16} /></button><button type="button" className={`economic-icon-button ${aboutOpen ? "is-active" : ""}`} aria-label="数据与使用说明" aria-expanded={aboutOpen} onClick={() => setAboutOpen((value) => !value)}><CircleHelp size={17} /></button></div>
+      <div className="economic-header-end"><span className={`economic-connection ${stale || !sourceCount ? "is-delayed" : ""}`} role="status"><i />{statusLabel}</span><div className="economic-header-clock"><time dateTime={new Date(now).toISOString()}>{formatClock(now)}</time><span>北京时间 UTC+8</span></div><button type="button" className={`economic-icon-button ${refreshing ? "is-refreshing" : ""}`} aria-label={refreshing ? "正在刷新" : "刷新全部数据"} title="刷新全部数据" disabled={refreshing || overlays.refreshing} onClick={refreshAll}><RefreshCw size={16} /></button><button type="button" className={`economic-icon-button ${aboutOpen ? "is-active" : ""}`} aria-label="数据与使用说明" aria-expanded={aboutOpen} onClick={() => setAboutOpen((value) => !value)}><CircleHelp size={17} /></button></div>
     </header>
 
-    <div className="economic-map-stage"><Suspense fallback={<div className="economic-scene-loading" role="status"><Globe2 size={40} /><span>正在构建全球视野</span></div>}><EconomicMap items={items} referencePoints={references} selectedId={selected?.id || null} onSelect={selectItem} onSelectReference={selectReference} projection={projection} focus={focus} /></Suspense></div>
+    <div className="economic-map-stage"><Suspense fallback={<div className="economic-scene-loading" role="status"><Globe2 size={40} /><span>正在构建全球视野</span></div>}><EconomicMap items={newsMapVisible ? items : []} features={mapFeatures} selectedFeatureId={selectedFeature?.id || null} onSelectFeature={selectMapFeature} referencePoints={references} selectedId={selected?.id || null} onSelect={selectItem} onSelectReference={selectReference} projection={projection} focus={focus} /></Suspense></div>
     <div className="economic-map-toolbar" aria-label="地图视图"><div className="economic-projection-switch" role="group" aria-label="地图投影"><button type="button" aria-pressed={projection === "globe"} title="地球视图" onClick={() => setProjection("globe")}><Globe2 size={15} /><span>地球</span></button><button type="button" aria-pressed={projection === "mercator"} title="平面地图" onClick={() => setProjection("mercator")}><MapIcon size={15} /><span>平面</span></button></div><span className="economic-toolbar-separator" /><div className="economic-presets" role="group" aria-label="地图区域">{presets.map((entry) => <button type="button" key={entry.label} aria-pressed={preset === entry.label} onClick={() => { setPreset(entry.label); setFocus({ longitude: entry.longitude, latitude: entry.latitude, zoom: entry.zoom, key: Date.now() }); }}>{entry.label}</button>)}</div></div>
 
     <aside className="economic-layers economic-panel" aria-label="情报图层与来源">
       <div className="economic-panel-heading"><div><Layers3 size={15} /><h1>情报图层</h1></div><span className="economic-section-code">LAYERS</span><button type="button" className="economic-panel-collapse" aria-label="收起情报图层" onClick={() => setLayersOpen(false)}><ChevronRight size={14} /></button></div>
-      <div className="economic-layer-intro"><span>从全球事件，读懂经济脉动</span><strong>{snapshot ? snapshot.coverage.economicCount.toLocaleString() : "—"}<small> 条消息 · 当前快照</small></strong></div>
-      <div className="economic-section-label"><span>消息主题</span><button type="button" onClick={() => setEnabledCategories(enabledCategories.size === categories.length ? new Set() : new Set(categories.map((entry) => entry.id)))}>{enabledCategories.size === categories.length ? "全部关闭" : "全部开启"}</button></div>
+      <div className="economic-layer-intro"><span>从全球事件，读懂经济脉动</span><strong>{overlays.snapshot ? mapFeatures.length.toLocaleString() : "—"}<small> 个地图对象 · 当前快照</small></strong></div>
+      <MapLayerPanel snapshot={overlays.snapshot} error={overlays.error} enabled={enabledMapLayers} onToggle={toggleMapLayer} newsVisible={newsMapVisible} onNewsToggle={() => setNewsMapVisible(value => !value)} newsCount={locatedCount} refreshing={overlays.refreshing} onRefresh={overlays.refresh} />
+      <div className="economic-section-label"><span>快讯主题筛选</span><button type="button" onClick={() => setEnabledCategories(enabledCategories.size === categories.length ? new Set() : new Set(categories.map((entry) => entry.id)))}>{enabledCategories.size === categories.length ? "全部关闭" : "全部开启"}</button></div>
       <div className="economic-category-list">{categories.map(({ id, label, color, icon: Icon }) => <button type="button" className="economic-layer" style={{ "--category-color": color } as CSSProperties} key={id} aria-pressed={enabledCategories.has(id)} onClick={() => toggleCategory(id)}><span className="economic-layer-icon"><Icon size={16} /></span><span className="economic-layer-name">{label}</span><span className="economic-layer-count">{snapshot?.categories.find((category) => category.id === id)?.count ?? "—"}</span><span className="economic-toggle" aria-hidden="true"><i /></span></button>)}</div>
       <div className="economic-section-label"><span>经济基础设施</span><span className="economic-static-label">静态参考</span></div>
       <div className="economic-reference-list">{referenceLayers.map(({ id, label, icon: Icon }) => <button type="button" key={id} className="economic-reference-layer" aria-pressed={enabledReferences.has(id)} onClick={() => setEnabledReferences((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })}><Icon size={14} /><span>{label}</span><span className="economic-check" aria-hidden="true">{enabledReferences.has(id) ? <Check size={11} /> : null}</span></button>)}</div>
       <div className="economic-layer-summary"><div><strong>{locatedCount}</strong><span>有地区线索</span></div><div><strong>{locationsCount}</strong><span>关联地区</span></div></div>
       <section className="economic-source-section"><button type="button" className="economic-source-heading" aria-expanded={sourcesOpen} onClick={() => setSourcesOpen((value) => !value)}><span><Radio size={13} />数据源状态</span><span>{sourceCount}/{snapshot?.sources.length || "—"}<ChevronDown size={13} className={sourcesOpen ? "is-open" : ""} /></span></button>{sourcesOpen ? <div className="economic-source-list">{snapshot?.sources.map((entry) => <div className="economic-source" key={entry.id} title={entry.message || `${entry.description || ""} · ${entry.lastSuccessAt ? `最后采集 ${formatFull(entry.lastSuccessAt)}` : "等待首次采集"}`}><span><i className={`is-${entry.state}`} />{entry.label}</span><small>{entry.kind === "official" ? "官方" : "媒体"} · {sourceLabels[entry.state]}</small></div>) || <p>正在连接情报来源…</p>}</div> : null}</section>
-      <p className="economic-layer-note"><ShieldCheck size={12} /><span>消息来源可追溯<br />地图标记为正文提及地区</span></p>
+      <p className="economic-layer-note"><ShieldCheck size={12} /><span>消息来源可追溯<br />点、线、面图层可独立切换</span></p>
     </aside>
 
+    <MapLegend enabled={enabledMapLayers} newsVisible={newsMapVisible} />
     <aside className="economic-feed economic-panel" aria-labelledby="economic-feed-title">
       <div className="economic-panel-heading"><div><Newspaper size={15} /><h2 id="economic-feed-title">全球快讯</h2><span className="economic-count-badge">{items.length}</span></div><span className={`economic-feed-live ${feedState !== "LIVE FEED" ? "is-delayed" : ""}`} title={failedSources.length ? "部分来源采集异常，请查看各来源状态" : "来源采集状态；不代表每条通报刚刚发布"}><i />{feedState}</span><button type="button" className="economic-panel-collapse" aria-label="收起全球快讯" onClick={() => setFeedOpen(false)}><ChevronRight size={14} /></button></div>
       <div className="economic-feed-filters"><label className="economic-search"><Search size={15} /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索事件、地区、关键词" aria-label="搜索情报消息" />{query ? <button type="button" aria-label="清空搜索" onClick={() => { setQuery(""); searchRef.current?.focus(); }}><X size={13} /></button> : <kbd>/</kbd>}</label><div className="economic-feed-controls"><span className="economic-snapshot-label" title="每次采集替换当前消息，不保存历史">当前快照</span><label className="economic-source-filter"><span className="sr-only">消息来源</span><select value={source} onChange={(event) => setSource(event.target.value)}><option value="all">全部来源</option>{snapshot?.sources.map((entry) => <option value={entry.id} key={entry.id}>{entry.label}</option>)}</select><ChevronDown size={12} /></label><button type="button" className="economic-important-filter" aria-pressed={importantOnly} title="仅看重点消息" aria-label="仅看重点消息" onClick={() => setImportantOnly((value) => !value)}><Star size={14} /></button></div></div>
@@ -162,11 +195,12 @@ export function App() {
     {!layersOpen ? <nav className="economic-layer-rail economic-panel" aria-label="折叠情报图层"><button type="button" aria-label="展开情报图层" title="展开情报图层" onClick={() => setLayersOpen(true)}><Layers3 size={18} /></button>{categories.map(({ id, label, color, icon: Icon }) => <button type="button" key={id} title={label} aria-label={label} aria-pressed={enabledCategories.has(id)} onClick={() => toggleCategory(id)} style={{ "--category-color": color } as CSSProperties}><Icon size={17} /></button>)}</nav> : null}
     {!feedOpen ? <nav className="economic-feed-rail economic-panel" aria-label="折叠全球快讯"><button type="button" aria-label="展开全球快讯" title="展开全球快讯" onClick={() => setFeedOpen(true)}><Newspaper size={18} /><span>{items.length}</span></button><button type="button" aria-label="打开消息搜索" title="打开消息搜索" onClick={() => { setFeedOpen(true); window.setTimeout(() => searchRef.current?.focus(), 0); }}><Search size={17} /></button><button type="button" aria-label="数据与使用说明" title="数据与使用说明" onClick={() => setAboutOpen(true)}><CircleHelp size={17} /></button></nav> : null}
 
+    {selectedFeature ? <MapFeatureDetail feature={selectedFeature} detailRef={detailRef} onClose={closeDetail} onNews={openMapNews} /> : null}
     {selected || reference ? <section className="economic-detail economic-panel" ref={detailRef} tabIndex={-1} aria-labelledby="economic-detail-title"><div className="economic-detail-eyebrow"><span><Crosshair size={12} />{selected ? "EVENT INTELLIGENCE" : "ECONOMIC INFRASTRUCTURE"}</span><button type="button" className="economic-icon-button" aria-label="关闭详情" onClick={closeDetail}><X size={15} /></button></div><h2 id="economic-detail-title">{selected?.title || reference?.name}</h2>
       {selected ? <><div className="economic-detail-meta"><span>{selected.sourceLabel}</span><time dateTime={selected.publishedAt}>{formatFull(selected.publishedAt)}</time></div><div className="economic-detail-tags">{selected.categories.map((id) => <span key={id} style={{ color: categoryById.get(id)?.color }}>{categoryById.get(id)?.label}</span>)}{selected.important ? <span className="is-important"><Star size={11} />重点</span> : null}</div><p className="economic-detail-content">{selected.content || selected.title}</p><p className="economic-detail-source-note">{snapshot?.sources.find((entry) => entry.id === selected.source)?.description}</p><div className="economic-location-evidence"><strong><MapPin size={12} />地区线索</strong>{selected.locations.length ? selected.locations.map((location) => <div key={location.id}><span>{location.label}<small>{precisionLabels[location.precision]}</small></span><p>正文匹配：{location.matchedTerms.join("、")}</p></div>) : <p>正文未识别到明确地区。保留在消息列表，不在地图上推测落点。</p>}<small>标记表示文章提及地区，不是事件的精确发生位置。</small></div></> : <><div className="economic-detail-tags"><span>静态参考 · {referenceLayers.find((layer) => layer.id === reference?.kind)?.label}</span></div><p className="economic-detail-content">{reference?.description}</p><p className="economic-detail-reference-note">经济地理背景参考，不表示实时吞吐量、运行状态或当前事件。</p></>}
       <div className="economic-detail-bottom"><span>{selected ? "来源时间 · 北京时间" : "公开地理资料"}</span>{detailUrl ? <a href={detailUrl} target="_blank" rel="noreferrer">{selected ? "阅读原文" : "查看参考来源"}<ExternalLink size={12} /></a> : <span>暂无原文链接</span>}</div></section> : null}
 
-    {aboutOpen ? <section className="economic-about economic-panel" role="dialog" aria-labelledby="economic-about-title"><div className="economic-panel-heading"><h2 id="economic-about-title">关于经济情报</h2><button type="button" className="economic-icon-button" aria-label="关闭说明" onClick={() => setAboutOpen(false)}><X size={16} /></button></div><p>{snapshot?.methodology || "聚合官方与媒体来源，按经济和公共风险主题整理消息；以正文明确提及的地区生成地图线索。"}</p><p>官方发布用于查阅机构原文，媒体报道用于补充经济事件。来源状态反映采集结果，采集正常不等于内容已独立核验。仅保留各来源当前消息的内存快照，刷新替换，重启清空，不保存历史或备份。</p><p>{snapshot?.coverage.truncated ? `当前快照显示最近 ${snapshot.coverage.returnedCount} 条消息。` : ""}搜索与图层筛选作用于已加载消息。</p><p>航运航线展示机构通报；卫星主题包含地球观测事件目录。气象预警和卫生通报不等于已确认损失。金融中心、港口和贸易通道为静态参考。聚合与分类不构成事实核验或投资建议。</p><div><kbd>/</kbd> 搜索消息 <kbd>Esc</kbd> 关闭详情</div></section> : null}
+    {aboutOpen ? <section className="economic-about economic-panel" role="dialog" aria-labelledby="economic-about-title"><div className="economic-panel-heading"><h2 id="economic-about-title">关于经济情报</h2><button type="button" className="economic-icon-button" aria-label="关闭说明" onClick={() => setAboutOpen(false)}><X size={16} /></button></div><p>{snapshot?.methodology || "聚合官方与媒体来源，按经济和公共风险主题整理消息；以正文明确提及的地区生成地图线索。"}</p><p>官方发布用于查阅机构原文，媒体报道用于补充经济事件。来源状态反映采集结果，采集正常不等于内容已独立核验。仅保留各来源当前消息的内存快照，刷新替换，重启清空，不保存历史或备份。</p><p>{snapshot?.coverage.truncated ? `当前快照显示最近 ${snapshot.coverage.returnedCount} 条消息。` : ""}搜索与图层筛选作用于已加载消息。</p><p>地图图层独立于快讯筛选。气象使用来源坐标与范围，航空显示最近一次观测的抽样位置，航运线为静态通道示意，在轨卫星为轨道推算的地面投影与预测轨迹，卫生符号为通报涉及地区的近似中心。新闻数字标记可单独开启。气象预警和卫生通报不等于已确认损失。聚合与分类不构成事实核验或投资建议。</p><div><kbd>/</kbd> 搜索消息 <kbd>Esc</kbd> 关闭详情</div></section> : null}
 
     <EconomicMarkets revision={revision} />
     <nav className="economic-mobile-nav" aria-label="工作台面板"><button type="button" aria-pressed={mobilePanel === "map"} onClick={() => setMobilePanel("map")}><Globe2 size={17} />地图</button><button type="button" aria-pressed={mobilePanel === "feed"} onClick={() => setMobilePanel("feed")}><Newspaper size={17} />快讯<span>{items.length}</span></button><button type="button" aria-pressed={mobilePanel === "layers"} onClick={() => setMobilePanel("layers")}><SlidersHorizontal size={17} />图层</button></nav>

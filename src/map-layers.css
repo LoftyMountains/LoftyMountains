@@ -1,0 +1,45 @@
+.economic-spatial-layers { border-bottom: 1px solid var(--econ-line); margin-bottom: 16px; padding-bottom: 12px; }
+.economic-spatial-list { padding: 0 8px; }
+.economic-spatial-toggle { min-height: 49px; height: auto; padding-block: 8px; }
+.economic-spatial-name { display: flex; flex-direction: column; gap: 4px; color: #c8d4dc; font-size: 11px; }
+.economic-spatial-name small { color: #8097a6; font-size: 9px; }
+.economic-spatial-state { display: flex; align-items: center; gap: 5px; padding: 0 9px 6px 38px; font-size: 8px; color: #8bbdad; }
+.economic-spatial-state i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.economic-spatial-state span { color: #7d929e; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.economic-spatial-state.is-unavailable, .economic-spatial-state.is-stale { color: #d4b987; }
+.economic-spatial-state.is-reference { color: #97abb6; }
+.economic-spatial-notice { font-size: 10px; line-height: 1.6; color: #c7b894; margin: 5px 12px 12px; }
+.economic-map-legend { position: absolute; z-index: 11; left: 290px; bottom: 151px; width: 185px; padding: 10px 12px; pointer-events: none; }
+.economic-map-legend > strong { display: block; font-size: 9px; font-weight: 500; letter-spacing: 1px; color: #8e9eaa; margin-bottom: 8px; }
+.economic-map-legend > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 4px; }
+.economic-map-legend > div > span { display: flex; gap: 5px; align-items: center; font-size: 9px; color: #b6c4cf; white-space: nowrap; }
+.economic-map-legend > small { display: block; font-size: 8px; color: #8b9ca9; margin-top: 9px; line-height: 1.6; }
+.economic-legend-count { display: grid; place-items: center; width: 13px; height: 13px; color: #d6b779; border: 1px solid #d6b779; border-radius: 50%; font: 8px var(--econ-mono); }
+.economic-map-facts { font-size: 11px; margin: 20px 0 10px; }
+.economic-map-facts > div { padding: 9px 0; border-top: 1px solid #a3bbce18; }
+.economic-map-facts dt { display: flex; gap: 4px; align-items: center; color: #839bac; margin-bottom: 5px; }
+.economic-map-facts dd { margin: 0; line-height: 1.6; color: #c5d1da; overflow-wrap: anywhere; }
+.economic-map-related { width: 100%; min-height: 36px; border: 1px solid #d6b77940; border-radius: 6px; background: #d6b7790a; color: #d6b779; font-size: 11px; margin: 8px 0 12px; }
+.economic-map-related:hover { background: #d6b7791a; }
+.economic-app.has-map-detail .economic-map-detail { left: auto; right: 20px; top: 84px; bottom: 82px; width: 348px; max-width: none; max-height: none; margin: 0; }
+.economic-app.has-map-detail .economic-feed { visibility: hidden; }
+.economic-map-detail .economic-detail-bottom { position: sticky; bottom: 0; background: #0c111df5; }
+@media (min-width:1600px) { .economic-app.has-map-detail .economic-map-detail { right: 26px; width: 376px; } }
+@media (max-width:1200px) and (min-width:761px) { .economic-app.has-map-detail .economic-map-detail { right: 14px; width: 310px; } }
+@media (max-width:960px) and (min-width:761px) { .economic-app.has-map-detail .economic-map-detail { width: 280px; } }
+@media (max-width:1100px) { .economic-map-legend { left: 254px; width: 174px; } }
+@media (max-width:760px) {
+  .economic-app.has-map-detail .economic-map-detail { inset: auto 14px 123px; width: auto; max-height: 36dvh; }
+  .economic-spatial-list { padding-inline: 12px; }
+  .economic-spatial-toggle { min-height: 55px; }
+  .economic-spatial-name { font-size: 13px; }
+  .economic-spatial-name small { font-size: 10px; }
+  .economic-spatial-state { font-size: 10px; padding-left: 40px; }
+  .economic-map-legend { left: 14px; bottom: 192px; width: 176px; padding: 9px; }
+  .economic-map-legend > strong { display: none; }
+  .economic-map-legend > div { gap: 6px; }
+  .economic-map-legend > small { font-size: 7px; margin-top: 7px; }
+  .mobile-feed .economic-map-legend, .mobile-layers .economic-map-legend { display: none; }
+  .economic-map-facts { font-size: 12px; }
+  .economic-map-related { min-height: 42px; font-size: 12px; }
+}

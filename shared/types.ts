@@ -2,6 +2,54 @@ export type SourceId = "cls" | "wallstreetcn" | "jin10" | "eastmoney" | "sina" |
 
 export type EconomicCategory = "macro" | "monetary" | "markets" | "trade" | "energy" | "industry" | "weather" | "transport" | "satellite" | "health";
 
+export type MapLayerId = "weather" | "aviation" | "maritime" | "satellites" | "health";
+export type MapCoordinate = [number, number];
+export type MapGeometry =
+  | { type: "Point"; coordinates: MapCoordinate }
+  | { type: "LineString"; coordinates: MapCoordinate[] }
+  | { type: "MultiLineString"; coordinates: MapCoordinate[][] }
+  | { type: "Polygon"; coordinates: MapCoordinate[][] };
+export interface MapFeature {
+  type: "Feature";
+  id: string;
+  geometry: MapGeometry;
+  properties: {
+    layer: MapLayerId;
+    name: string;
+    eventType: string;
+    /** Marker position; for lines/polygons this is an explicitly described anchor. */
+    anchor: MapCoordinate;
+    sourceId: string;
+    sourceLabel: string;
+    sourceUrl: string;
+    sourceTime: string | null;
+    timeKind: "observation" | "issued" | "updated" | "prediction" | "reference";
+    positionKind: "source-reported" | "reference-route" | "predicted" | "approximate-region";
+    description: string;
+    positionTime?: string;
+    heading?: number;
+    severity?: "low" | "medium" | "high";
+    relatedNewsId?: string;
+    details?: { label: string; value: string }[];
+  };
+}
+export interface MapLayerStatus {
+  id: MapLayerId;
+  label: string;
+  state: "live" | "stale" | "unavailable" | "reference";
+  updatedAt: string | null;
+  count: number;
+  message: string;
+  sources: string[];
+}
+export interface MapOverlaysSnapshot {
+  generatedAt: string;
+  persisted: false;
+  refreshAfterMs: number;
+  features: MapFeature[];
+  layers: MapLayerStatus[];
+}
+
 export interface GlobalMarketQuote {
   symbol: string;
   name: string;
