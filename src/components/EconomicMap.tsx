@@ -5,6 +5,7 @@ import maplibregl from "maplibre-gl/dist/maplibre-gl-csp.js";
 import type { Map as MapLibreMap, Marker } from "maplibre-gl";
 import type { FeatureCollection, Geometry, MultiPolygon, Polygon } from "geojson";
 import type { EconomicLocation, EconomicNewsItem, EconomicReferencePoint, MapFeature, MapLayerId } from "../../shared/types";
+import type { AviationCenter } from "../lib/live-aviation";
 import { OVERLAY_LAYERS, POSITION_LABELS, isOverlayShapeVisible, overlayIcon, prepareOverlays } from "../lib/map-overlays";
 import { installOverlayLayers, OVERLAY_HIT_LAYERS, updateOverlayLayers } from "../lib/map-overlay-layers";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -21,6 +22,7 @@ export interface EconomicMapProps {
   onSelect: (id: string) => void;
   onSelectReference: (point: EconomicReferencePoint) => void;
   projection: "globe" | "mercator";
+  onViewCenterChange?: (center: AviationCenter) => void;
   focus: { longitude: number; latitude: number; zoom?: number; key: number } | null;
 }
 
@@ -30,7 +32,7 @@ interface MentionPoint {
   important: boolean;
 }
 
-const HOME = { longitude: 70, latitude: 23, zoom: 2.1 };
+const HOME = { longitude: 70, latitude: 20, zoom: 2.1 };
 const BASEMAP_URL = `${import.meta.env.BASE_URL}data/countries.geojson`;
 const GRATICULE = geoGraticule10();
 const KIND_LABELS: Record<EconomicReferencePoint["kind"], string> = {
@@ -81,16 +83,17 @@ function sphericalGeometry(geometry: Geometry): Geometry {
   return geometry;
 }
 
-export function EconomicMap({ items, referencePoints, features, selectedFeatureId, onSelectFeature, selectedId, onSelect, onSelectReference, projection, focus }: EconomicMapProps) {
+export function EconomicMap({ items, referencePoints, features, selectedFeatureId, onSelectFeature, selectedId, onSelect, onSelectReference, projection, focus, onViewCenterChange }: EconomicMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef(new Map<string, Marker>());
-  const callbacksRef = useRef({ onSelect, onSelectReference, onSelectFeature });
-  callbacksRef.current = { onSelect, onSelectReference, onSelectFeature };
+  const callbacksRef = useRef({ onSelect, onSelectReference, onSelectFeature, onViewCenterChange });
+  callbacksRef.current = { onSelect, onSelectReference, onSelectFeature, onViewCenterChange };
   const [ready, setReady] = useState(false);
   const [fallback, setFallback] = useState(false);
   const [basemapError, setBasemapError] = useState(false);
   const [camera, setCamera] = useState(HOME);
+  const [dragging, setDragging] = useState(false);
   const [size, setSize] = useState({ width: 1200, height: 700 });
   const [countries, setCountries] = useState<FeatureCollection | null>(null);
   const [hoveredFeature, setHoveredFeature] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -105,6 +108,10 @@ export function EconomicMap({ items, referencePoints, features, selectedFeatureI
   const referenceRef = useRef(referencePoints);
   mentionRef.current = mentions;
   referenceRef.current = referencePoints;
+
+  useEffect(() => {
+    if (!dragging) callbacksRef.current.onViewCenterChange?.({ longitude: camera.longitude, latitude: camera.latitude });
+  }, [camera.longitude, camera.latitude, projection, dragging]);
 
   // Geometry is served by this application; the map never requests tiles, keys, or font services.
   useEffect(() => {
@@ -383,11 +390,12 @@ export function EconomicMap({ items, referencePoints, features, selectedFeatureI
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.currentTarget.setPointerCapture(event.pointerId);
+          setDragging(true);
           dragRef.current = { x: event.clientX, y: event.clientY, longitude: camera.longitude, latitude: camera.latitude };
         }}
         onPointerMove={moveFallback}
-        onPointerUp={() => { dragRef.current = null; }}
-        onPointerCancel={() => { dragRef.current = null; }}>
+        onPointerUp={() => { dragRef.current = null; setDragging(false); }}
+        onPointerCancel={() => { dragRef.current = null; setDragging(false); }}>
         <path className="economic-fallback-ocean" d={fallbackPath({ type: "Sphere" }) ?? ""} />
         <path className="economic-fallback-grid" d={fallbackPath(GRATICULE) ?? ""} />
         {countries?.features.map((feature, index) => <path className="economic-fallback-country" key={index} d={fallbackPath(feature) ?? ""} />)}

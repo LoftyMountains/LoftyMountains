@@ -44,3 +44,19 @@
   .economic-map-facts { font-size: 12px; }
   .economic-map-related { min-height: 42px; font-size: 12px; }
 }
+
+.economic-aviation-controls { margin: 0 8px 12px 38px; padding-top: 2px; }
+.economic-aviation-mode { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 7px; }
+.economic-aviation-mode button { min-height: 30px; border: 1px solid #8aacc333; border-radius: 5px; padding: 4px 7px; color: #a2b4c3; background: transparent; font-size: 9px; }
+.economic-aviation-mode button[aria-pressed="true"] { border-color: #d6b77966; color: #e3c58c; background: #d6b77912; }
+.economic-aviation-mode button:hover { background: #d6b77920; }
+.economic-aviation-controls p { margin: 5px 0; color: #8ea5b5; font-size: 9px; line-height: 1.6; }
+.economic-aviation-controls p.economic-aviation-scope { color: #bbccd8; }
+.economic-aviation-attribution { display: flex; align-items: center; gap: 7px; }
+.economic-aviation-attribution a { color: #c8b484; text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width:760px) {
+  .economic-aviation-controls { margin-left: 40px; }
+  .economic-aviation-mode button { min-height: 40px; font-size: 11px; padding-inline: 10px; }
+  .economic-aviation-controls p { font-size: 10px; }
+  .economic-aviation-attribution a { display: inline-flex; align-items: center; min-height: 32px; }
+}

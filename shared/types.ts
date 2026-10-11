@@ -107,6 +107,16 @@ export interface MapOverlaysSnapshot {
   layers: MapLayerStatus[];
 }
 
+/** A bounded current receiver-network snapshot, not stored flight history. */
+export interface LiveAviationSnapshot {
+  generatedAt: string;
+  persisted: false;
+  refreshAfterMs: number;
+  scope: { latitude: number; longitude: number; radiusNm: number };
+  features: MapFeature[];
+  status: MapLayerStatus;
+}
+
 export interface GlobalMarketQuote {
   symbol: string;
   name: string;

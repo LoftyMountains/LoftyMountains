@@ -1,7 +1,9 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Anchor, Building2, Check, ChevronDown, ChevronRight, CircleHelp, CloudLightning, Crosshair, ExternalLink, Factory, Globe2, Landmark, Layers3, Map as MapIcon, MapPin, Newspaper, RefreshCw, Satellite, ShieldPlus, Ship, Search, ShieldCheck, SlidersHorizontal, Star, TrendingUp, Waves, X, Zap } from "lucide-react";
-import type { EconomicCategory, EconomicNewsItem, EconomicReferencePoint, MapLayerId } from "../shared/types";
+import type { EconomicCategory, EconomicNewsItem, EconomicReferencePoint, MapLayerId, MapLayerStatus } from "../shared/types";
 import { useEconomicSnapshot } from "./hooks/useEconomicSnapshot";
+import { useLiveAviation } from "./hooks/useLiveAviation";
+import { currentLiveAircraft, isCurrentLiveAircraft, LIVE_AIRCRAFT_FRESH_MS, normalizeAviationCenter, type AviationCenter, type AviationMode } from "./lib/live-aviation";
 import { useMapOverlays } from "./hooks/useMapOverlays";
 import { useSourceCatalog } from "./hooks/useSourceCatalog";
 import { SourceCatalog, SourceCatalogSummary } from "./components/SourceCatalog";
@@ -53,6 +55,13 @@ export function App() {
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [catalogSourceId, setCatalogSourceId] = useState<string | null>(null);
   const [enabledMapLayers, setEnabledMapLayers] = useState<Set<MapLayerId>>(() => new Set(mapLayers.map(layer => layer.id)));
+  const [aviationMode, setAviationMode] = useState<AviationMode>("live");
+  const [viewCenter, setViewCenter] = useState<AviationCenter>({ latitude: 20, longitude: 70 });
+  const onViewCenterChange = useCallback((center: AviationCenter) => {
+    const next = normalizeAviationCenter(center);
+    setViewCenter(previous => previous.latitude === next.latitude && previous.longitude === next.longitude ? previous : next);
+  }, []);
+  const liveAviation = useLiveAviation(viewCenter, aviationMode === "live" && enabledMapLayers.has("aviation"));
   const [newsMapVisible, setNewsMapVisible] = useState(false);
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
   const [enabledCategories, setEnabledCategories] = useState<Set<EconomicCategory>>(() => new Set(categories.map((entry) => entry.id)));
@@ -89,11 +98,30 @@ export function App() {
       && (!text || `${item.title} ${item.content} ${item.tags.join(" ")} ${item.locations.map((location) => location.label).join(" ")}`.toLocaleLowerCase().includes(text)));
   }, [snapshot, enabledCategories, source, importantOnly, query]);
   const mapTimeBucket = Math.floor(now / 30_000);
-  const mapFeatures = useMemo(() => (overlays.snapshot?.features || []).filter(feature => {
-    if (!enabledMapLayers.has(feature.properties.layer)) return false;
-    const time = feature.properties.layer === "aviation" ? feature.properties.sourceTime : feature.properties.layer === "satellites" ? feature.properties.positionTime : null;
-    return !time || mapTimeBucket * 30_000 - Date.parse(time) <= 20 * 60_000;
-  }), [overlays.snapshot, enabledMapLayers, mapTimeBucket]);
+  const liveEligibilityKey = (liveAviation.snapshot?.features || []).map(feature => isCurrentLiveAircraft(feature, now) ? feature.id : "").join("|");
+  // Keep the GPU/SVG input stable on clock ticks; only new observations or expiry change it.
+  const liveAircraft = useMemo(() => currentLiveAircraft(liveAviation.snapshot?.features || [], now), [liveAviation.snapshot, liveEligibilityKey]);
+  const mapFeatures = useMemo(() => [
+    ...(overlays.snapshot?.features || []).filter(feature => {
+      if (!enabledMapLayers.has(feature.properties.layer) || feature.properties.layer === "aviation" && aviationMode === "live") return false;
+      const time = feature.properties.layer === "aviation" ? feature.properties.sourceTime : feature.properties.layer === "satellites" ? feature.properties.positionTime : null;
+      return !time || mapTimeBucket * 30_000 - Date.parse(time) <= 20 * 60_000;
+    }),
+    ...(aviationMode === "live" && enabledMapLayers.has("aviation") ? liveAircraft : []),
+  ], [overlays.snapshot, enabledMapLayers, mapTimeBucket, aviationMode, liveAircraft]);
+  const displayedAircraft = mapFeatures.filter(feature => feature.properties.layer === "aviation");
+  const latestAircraftObservation = displayedAircraft.reduce<string | null>((latest, feature) => {
+    const time = feature.properties.sourceTime;
+    return time && (!latest || Date.parse(time) > Date.parse(latest)) ? time : latest;
+  }, null);
+  const liveStatus: MapLayerStatus | null = liveAviation.snapshot ? {
+    ...liveAviation.snapshot.status,
+    count: liveAircraft.length,
+    state: liveAviation.error || liveAviation.snapshot.features.length > 0 && !liveAircraft.length ? (liveAircraft.length ? "stale" : "unavailable")
+      : liveAircraft.some(feature => now - Date.parse(feature.properties.sourceTime!) > LIVE_AIRCRAFT_FRESH_MS) ? "stale" : liveAviation.snapshot.status.state,
+    message: liveAviation.error || (liveAviation.snapshot.features.length > 0 && !liveAircraft.length ? "Previous aircraft observations have expired. Waiting for a fresh position report." : liveAviation.snapshot.status.message),
+  } : null;
+  const aviationStatus = aviationMode === "live" ? liveStatus : overlays.snapshot?.layers.find(layer => layer.id === "aviation") || null;
   const selectedFeature = mapFeatures.find(feature => feature.id === selectedFeatureId) || null;
   const references = useMemo(() => (snapshot?.referencePoints || []).filter((point) => enabledReferences.has(point.kind)), [snapshot, enabledReferences]);
   const selected = items.find((item) => item.id === selectedId) || null;
@@ -153,7 +181,7 @@ export function App() {
     if (!feature) return;
     lastFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSelectedFeatureId(id); setSelectedId(null); setReference(null); setPreset(""); setMobilePanel("map");
-    setFocus({ longitude: feature.properties.anchor[0], latitude: feature.properties.anchor[1], zoom: feature.properties.layer === "satellites" ? 2.1 : 3, key: Date.now() });
+    if (!(aviationMode === "live" && feature.properties.sourceId === "adsb-lol")) setFocus({ longitude: feature.properties.anchor[0], latitude: feature.properties.anchor[1], zoom: feature.properties.layer === "satellites" ? 2.1 : 3, key: Date.now() });
   }
   function openMapNews(id: string) {
     setQuery(""); setSource("all"); setImportantOnly(false); setEnabledCategories(new Set(categories.map(entry => entry.id)));
@@ -162,7 +190,8 @@ export function App() {
   function toggleMapLayer(id: MapLayerId) {
     setEnabledMapLayers(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   }
-  function refreshAll() { refresh(); overlays.refresh(); catalog.refresh(); }
+  function refreshMapLayers() { overlays.refresh(); liveAviation.refresh(); }
+  function refreshAll() { refresh(); refreshMapLayers(); catalog.refresh(); }
   function openSourceCatalog(id: string | null = null) { setCatalogSourceId(id); setCatalogOpen(true); }
 
   function toggleCategory(id: EconomicCategory) {
@@ -178,13 +207,13 @@ export function App() {
       <div className="economic-header-end"><span className={`economic-connection ${stale || !sourceCount ? "is-delayed" : ""}`} role="status"><i />{statusLabel}</span><div className="economic-header-clock"><time dateTime={new Date(now).toISOString()}>{formatClock(now)}</time><span>UTC+8</span></div><button type="button" className={`economic-icon-button ${refreshing ? "is-refreshing" : ""}`} aria-label={refreshing ? "Refreshing" : "Refresh all data"} title="Refresh all data" disabled={refreshing || overlays.refreshing} onClick={refreshAll}><RefreshCw size={16} /></button><button type="button" className={`economic-icon-button ${aboutOpen ? "is-active" : ""}`} aria-label="Data and usage guide" aria-expanded={aboutOpen} onClick={() => setAboutOpen((value) => !value)}><CircleHelp size={17} /></button></div>
     </header>
 
-    <div className="economic-map-stage"><Suspense fallback={<div className="economic-scene-loading" role="status"><Globe2 size={40} /><span>Loading the global view</span></div>}><EconomicMap items={newsMapVisible ? items : []} features={mapFeatures} selectedFeatureId={selectedFeature?.id || null} onSelectFeature={selectMapFeature} referencePoints={references} selectedId={selected?.id || null} onSelect={selectItem} onSelectReference={selectReference} projection={projection} focus={focus} /></Suspense></div>
+    <div className="economic-map-stage"><Suspense fallback={<div className="economic-scene-loading" role="status"><Globe2 size={40} /><span>Loading the global view</span></div>}><EconomicMap items={newsMapVisible ? items : []} features={mapFeatures} selectedFeatureId={selectedFeature?.id || null} onSelectFeature={selectMapFeature} referencePoints={references} selectedId={selected?.id || null} onSelect={selectItem} onSelectReference={selectReference} projection={projection} focus={focus} onViewCenterChange={onViewCenterChange} /></Suspense></div>
     <div className="economic-map-toolbar" aria-label="Map view"><div className="economic-projection-switch" role="group" aria-label="Map projection"><button type="button" aria-pressed={projection === "globe"} title="Globe view" onClick={() => setProjection("globe")}><Globe2 size={15} /><span>Globe</span></button><button type="button" aria-pressed={projection === "mercator"} title="Flat map" onClick={() => setProjection("mercator")}><MapIcon size={15} /><span>Flat</span></button></div><span className="economic-toolbar-separator" /><div className="economic-presets" role="group" aria-label="Map region">{presets.map((entry) => <button type="button" key={entry.label} aria-pressed={preset === entry.label} onClick={() => { setPreset(entry.label); setFocus({ longitude: entry.longitude, latitude: entry.latitude, zoom: entry.zoom, key: Date.now() }); }}>{entry.label}</button>)}</div></div>
 
     <aside className="economic-layers economic-panel" aria-label="Intelligence layers and sources">
       <div className="economic-panel-heading"><div><Layers3 size={15} /><h1>Layers</h1></div><span className="economic-section-code">INTELLIGENCE</span><button type="button" className="economic-panel-collapse" aria-label="Collapse intelligence layers" onClick={() => setLayersOpen(false)}><ChevronRight size={14} /></button></div>
-      <div className="economic-layer-intro"><span>Global events. Economic context.</span><strong>{overlays.snapshot ? mapFeatures.length.toLocaleString("en-US") : "—"}<small> map objects · current snapshot</small></strong></div>
-      <MapLayerPanel snapshot={overlays.snapshot} error={overlays.error} enabled={enabledMapLayers} onToggle={toggleMapLayer} newsVisible={newsMapVisible} onNewsToggle={() => setNewsMapVisible(value => !value)} newsCount={locatedCount} refreshing={overlays.refreshing} onRefresh={overlays.refresh} />
+      <div className="economic-layer-intro"><span>Global events. Economic context.</span><strong>{overlays.snapshot || liveAviation.snapshot ? mapFeatures.length.toLocaleString("en-US") : "—"}<small> map objects · current snapshot</small></strong></div>
+      <MapLayerPanel snapshot={overlays.snapshot} error={overlays.error} enabled={enabledMapLayers} onToggle={toggleMapLayer} newsVisible={newsMapVisible} onNewsToggle={() => setNewsMapVisible(value => !value)} newsCount={locatedCount} refreshing={overlays.refreshing || liveAviation.refreshing} onRefresh={refreshMapLayers} aviation={{ mode: aviationMode, onMode: setAviationMode, scope: liveAviation.scope, status: aviationStatus, error: aviationMode === "live" ? liveAviation.error : overlays.error, refreshing: aviationMode === "live" ? liveAviation.refreshing : overlays.refreshing, latestObservedAt: latestAircraftObservation }} />
       <div className="economic-section-label"><span>News topics</span><button type="button" onClick={() => setEnabledCategories(enabledCategories.size === categories.length ? new Set() : new Set(categories.map((entry) => entry.id)))}>{enabledCategories.size === categories.length ? "Disable all" : "Enable all"}</button></div>
       <div className="economic-category-list">{categories.map(({ id, label, color, icon: Icon }) => <button type="button" className="economic-layer" style={{ "--category-color": color } as CSSProperties} key={id} aria-pressed={enabledCategories.has(id)} onClick={() => toggleCategory(id)}><span className="economic-layer-icon"><Icon size={16} /></span><span className="economic-layer-name">{label}</span><span className="economic-layer-count">{snapshot?.categories.find((category) => category.id === id)?.count ?? "—"}</span><span className="economic-toggle" aria-hidden="true"><i /></span></button>)}</div>
       <div className="economic-section-label"><span>Infrastructure</span><span className="economic-static-label">Static reference</span></div>
@@ -209,12 +238,12 @@ export function App() {
     {!layersOpen ? <nav className="economic-layer-rail economic-panel" aria-label="Collapsed intelligence layers"><button type="button" aria-label="Expand intelligence layers" title="Expand intelligence layers" onClick={() => setLayersOpen(true)}><Layers3 size={18} /></button>{categories.map(({ id, label, color, icon: Icon }) => <button type="button" key={id} title={label} aria-label={label} aria-pressed={enabledCategories.has(id)} onClick={() => toggleCategory(id)} style={{ "--category-color": color } as CSSProperties}><Icon size={17} /></button>)}</nav> : null}
     {!feedOpen ? <nav className="economic-feed-rail economic-panel" aria-label="Collapsed global news"><button type="button" aria-label="Expand global news" title="Expand global news" onClick={() => setFeedOpen(true)}><Newspaper size={18} /><span>{items.length}</span></button><button type="button" aria-label="Open news search" title="Open news search" onClick={() => { setFeedOpen(true); window.setTimeout(() => searchRef.current?.focus(), 0); }}><Search size={17} /></button><button type="button" aria-label="Data and usage guide" title="Data and usage guide" onClick={() => setAboutOpen(true)}><CircleHelp size={17} /></button></nav> : null}
 
-    {selectedFeature ? <MapFeatureDetail feature={selectedFeature} detailRef={detailRef} onClose={closeDetail} onNews={openMapNews} onSource={openSourceCatalog} /> : null}
+    {selectedFeature ? <MapFeatureDetail now={now} feature={selectedFeature} detailRef={detailRef} onClose={closeDetail} onNews={openMapNews} onSource={openSourceCatalog} /> : null}
     {selected || reference ? <section className="economic-detail economic-panel" ref={detailRef} tabIndex={-1} aria-labelledby="economic-detail-title"><div className="economic-detail-eyebrow"><span><Crosshair size={12} />{selected ? "EVENT INTELLIGENCE" : "ECONOMIC INFRASTRUCTURE"}</span><button type="button" className="economic-icon-button" aria-label="Close details" onClick={closeDetail}><X size={15} /></button></div><h2 id="economic-detail-title">{selected?.title || reference?.name}</h2>
       {selected ? <><div className="economic-detail-meta"><span>{selected.sourceLabel}</span><time dateTime={selected.publishedAt}>{formatFull(selected.publishedAt)}</time></div><div className="economic-detail-tags">{selected.categories.map((id) => <span key={id} style={{ color: categoryById.get(id)?.color }}>{categoryById.get(id)?.label}</span>)}{selected.important ? <span className="is-important"><Star size={11} />Highlighted</span> : null}</div><p className="economic-detail-content">{selected.content || selected.title}</p><p className="economic-detail-source-note">{snapshot?.sources.find((entry) => entry.id === selected.source)?.description}</p>{!selected.evidence ? <div className="economic-location-evidence"><strong><MapPin size={12} />Location clues</strong>{selected.locations.length ? selected.locations.map((location) => <div key={location.id}><span>{location.label}<small>{precisionLabels[location.precision]}</small></span><p>Text matches: {location.matchedTerms.join(", ")}</p></div>) : <p>No clear location was identified in the text. The news remains in the feed without an inferred map position.</p>}<small>Markers show places mentioned in the article, not precise event locations.</small></div> : null}<NewsEvidenceDetail item={selected} onSource={openSourceCatalog} /></> : <><div className="economic-detail-tags"><span>Static reference · {referenceLayers.find((layer) => layer.id === reference?.kind)?.label}</span></div><p className="economic-detail-content">{reference?.description}</p><p className="economic-detail-reference-note">Economic geography reference. It does not show live throughput, operational status or current events.</p></>}
       <div className="economic-detail-bottom"><span>{selected ? "Source time · UTC+8" : "Public geographic data"}</span>{detailUrl ? <a href={detailUrl} target="_blank" rel="noreferrer">{selected ? "Read original" : "View reference source"}<ExternalLink size={12} /></a> : <span>No original link</span>}</div></section> : null}
 
-    {aboutOpen ? <section className="economic-about economic-panel" role="dialog" aria-labelledby="economic-about-title"><div className="economic-panel-heading"><h2 id="economic-about-title">About this intelligence</h2><button type="button" className="economic-icon-button" aria-label="Close guide" onClick={() => setAboutOpen(false)}><X size={16} /></button></div><p>{snapshot?.methodology || "Official releases and newsroom reports, organized by economic and public-risk topics. Map clues reflect places explicitly mentioned in the text."}</p><p>Official releases provide first-party records; media reports add context. Source status reflects collection health, not independent verification. Only the current in-memory snapshot is retained. Refreshes replace it and restarts clear it; no history or backups are stored.</p><p>{snapshot?.coverage.truncated ? `The current snapshot shows the latest ${snapshot.coverage.returnedCount} records. ` : ""}Search and topic filters apply to loaded news.</p><p>Map layers are independent of news filters. Weather uses source coordinates and areas; aviation shows sampled last-observed positions; shipping routes are static references. Satellite locations and tracks are orbital predictions. Health markers use approximate centers of regions mentioned in advisories. News count markers can be enabled separately. Alerts and advisories do not establish confirmed losses. Aggregation and classification are not fact-checking or investment advice.</p><div><kbd>/</kbd> Search news <kbd>Esc</kbd> Close details</div></section> : null}
+    {aboutOpen ? <section className="economic-about economic-panel" role="dialog" aria-labelledby="economic-about-title"><div className="economic-panel-heading"><h2 id="economic-about-title">About this intelligence</h2><button type="button" className="economic-icon-button" aria-label="Close guide" onClick={() => setAboutOpen(false)}><X size={16} /></button></div><p>{snapshot?.methodology || "Official releases and newsroom reports, organized by economic and public-risk topics. Map clues reflect places explicitly mentioned in the text."}</p><p>Official releases provide first-party records; media reports add context. Source status reflects collection health, not independent verification. Only the current in-memory snapshot is retained. Refreshes replace it and restarts clear it; no history or backups are stored.</p><p>{snapshot?.coverage.truncated ? `The current snapshot shows the latest ${snapshot.coverage.returnedCount} records. ` : ""}Search and topic filters apply to loaded news.</p><p>Map layers are independent of news filters. Weather uses source coordinates and areas; aviation shows last-observed aircraft in a 250 NM area around the map center, or an optional global sample; shipping routes are static references. Satellite locations and tracks are orbital predictions. Health markers use approximate centers of regions mentioned in advisories. News count markers can be enabled separately. Alerts and advisories do not establish confirmed losses. Aggregation and classification are not fact-checking or investment advice.</p><div><kbd>/</kbd> Search news <kbd>Esc</kbd> Close details</div></section> : null}
 
     <SourceCatalog snapshot={catalog.snapshot} error={catalog.error} refreshing={catalog.refreshing} onRefresh={catalog.refresh} open={catalogOpen} initialSourceId={catalogSourceId} onClose={() => setCatalogOpen(false)} />
     <EconomicMarkets revision={revision} />
