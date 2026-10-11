@@ -1,6 +1,6 @@
-export type SourceId = "cls" | "wallstreetcn" | "jin10" | "eastmoney" | "sina" | "fed" | "ecb" | "nbs" | "bea" | "boe" | "bbc";
+export type SourceId = "cls" | "wallstreetcn" | "jin10" | "eastmoney" | "sina" | "fed" | "ecb" | "nbs" | "bea" | "boe" | "bbc" | "gdacs" | "nhc" | "eonet" | "panama" | "eurocontrol" | "who-don" | "cdc-travel";
 
-export type EconomicCategory = "macro" | "monetary" | "markets" | "trade" | "energy" | "industry";
+export type EconomicCategory = "macro" | "monetary" | "markets" | "trade" | "energy" | "industry" | "weather" | "transport" | "satellite" | "health";
 
 export interface GlobalMarketQuote {
   symbol: string;
@@ -51,6 +51,7 @@ export interface EconomicReferencePoint {
 }
 
 export interface EconomicSnapshot {
+  retention?: { mode: "latest" | "history"; persisted: boolean; maxItemsPerSource: number };
   storage?: {
     state: "normal" | "warning" | "paused";
     message: string;

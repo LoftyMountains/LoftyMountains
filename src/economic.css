@@ -75,6 +75,8 @@ svg { flex-shrink: 0; }
 .economic-section-label button { border: 0; background: transparent; padding: 3px 0; font-size: 9px; color: #9da99f; }
 .economic-section-label button:hover { color: var(--econ-gold); }
 .economic-category-list { padding: 0 8px 16px; }
+.economic-snapshot-label { color: #acbeca; font-size: 10px; white-space: nowrap; padding: 0 5px; }
+.economic-detail-source-note { color: #8fa6b6; font-size: 11px; line-height: 1.75; border-left: 2px solid #d6b77955; padding-left: 10px; }
 .economic-layer { display: flex; align-items: center; gap: 9px; width: 100%; height: 40px; padding: 0 8px; background: transparent; border: 0; border-radius: 5px; text-align: left; }
 .economic-layer:hover { background: #1a263066; }
 .economic-layer-icon { display: flex; width: 20px; align-items: center; color: var(--category-color); opacity: .9; }
