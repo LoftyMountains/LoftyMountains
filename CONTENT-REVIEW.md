@@ -17,4 +17,6 @@ From this workspace, which has Playwright installed, run `node scripts/check-con
 
 This verifies the client build. Backend collection and deployment state require separate coordinator verification. Existing browser tabs running an older release are not controlled by the new build; stopping backend services is a separate operation.
 
+The checker saves requests, responses and failures even when acceptance fails, and completes both viewport cases before returning a nonzero exit code. CSP can block a request before Playwright route interception; these attempts still count against the strict zero-external-attempt condition. On 2026-10-12 the formal site passed both functional cases but this stronger check failed: CDN-injected Cloudflare analytics attempted to load once per document, was blocked by CSP, and produced no external responses. Both viewports made zero API or news/data-source attempts. Do not suppress those failed attempts or describe this as a fully passed network check; removing the injection requires a separate CDN setting change.
+
 Restoration requires reviewing the content policy first, then restoring the prior entry, HTML metadata/CSP and `publicDir` configuration together, followed by a complete build and network acceptance check. Changing the entry alone would leave the dashboard blocked by the review CSP and without its public assets.
