@@ -1,0 +1,38 @@
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #10100f;
+  color: #eeede8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button { font: inherit; }
+.review-page { min-height: 100svh; display: flex; flex-direction: column; padding: 0 clamp(24px, 6vw, 80px); }
+.review-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 30px 0; }
+.review-brand { font-size: 16px; font-weight: 600; letter-spacing: 0.19em; color: #d2b677; }
+.review-language { display: inline-flex; padding: 3px; border: 1px solid #39372f; border-radius: 11px; background: #171715; }
+.review-language button { min-width: 58px; min-height: 38px; padding: 6px 12px; border: 0; border-radius: 8px; background: transparent; color: #b8b7af; cursor: pointer; font-size: 13px; }
+.review-language button[aria-pressed="true"] { background: #302c22; color: #ebd4a4; }
+.review-language button:hover { color: #f3e0bc; background: #29261e; }
+.review-language button:active { background: #3d3423; }
+.review-language button:focus-visible { outline: 2px solid #d2b677; outline-offset: 4px; }
+.review-main { width: min(100%, 700px); margin: auto; padding: 70px 0 90px; }
+.review-rule { width: 44px; height: 2px; background: #b89959; margin-bottom: 30px; }
+.review-eyebrow { margin: 0 0 18px; font-size: 11px; font-weight: 600; letter-spacing: 0.17em; color: #c2aa7a; }
+h1 { max-width: 620px; margin: 0; font-size: clamp(34px, 4.5vw, 52px); font-weight: 500; line-height: 1.2; letter-spacing: -0.035em; text-wrap: balance; }
+.review-description { max-width: 550px; margin: 24px 0 0; color: #b9b9b1; font-size: 17px; line-height: 1.75; }
+.review-scope { margin-top: 42px; padding: 24px 0; border-top: 1px solid #343229; border-bottom: 1px solid #343229; }
+.review-scope h2 { margin: 0 0 18px; color: #b1ac9d; font-size: 12px; font-weight: 500; }
+.review-scope ul { display: flex; flex-wrap: wrap; gap: 14px 26px; margin: 0; padding: 0; list-style: none; }
+.review-scope li { font-size: 14px; color: #dedacd; }
+.review-note { margin-top: 24px; color: #a9a79f; font-size: 13px; line-height: 1.7; }
+.review-footer { padding: 20px 0 26px; color: #918e82; font-size: 11px; }
+@media (max-width: 480px) {
+  .review-header { padding-top: 20px; gap: 12px; }
+  .review-main { padding: 44px 0 60px; }
+  .review-description { font-size: 16px; }
+  .review-scope ul { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 20px; }
+}

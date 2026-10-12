@@ -1,14 +1,7 @@
 import { createRoot } from 'react-dom/client';
-import { lazy, Suspense } from 'react';
-import Dashboard from './app/page';
-import ErrorBoundary from './components/ErrorBoundary';
-import { LocaleProvider, LanguageSwitch } from './i18n';
-import { installApiTransport } from './lib/api-url';
-import './app/globals.css';
-import './i18n/locale.css';
-const Docs = lazy(() => import('./app/docs/page'));
-const Privacy = lazy(() => import('./app/privacy/page'));
-installApiTransport();
-const path = window.location.pathname.replace(/\/$/, '');
-const Page = path === '/docs' ? Docs : path === '/privacy' ? Privacy : Dashboard;
-createRoot(document.getElementById('root')!).render(<LocaleProvider><ErrorBoundary name="Jingxing"><Suspense fallback={null}><Page /></Suspense><LanguageSwitch /></ErrorBoundary></LocaleProvider>);
+import ContentReview from './review/ContentReview';
+import './review/content-review.css';
+
+// Content review hold: the previous entry is preserved in main-dashboard.tsx.
+// Do not import it here: its route modules and transport have network side effects.
+createRoot(document.getElementById('root')!).render(<ContentReview />);

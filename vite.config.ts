@@ -4,6 +4,9 @@ import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig({
   plugins: [react()],
+  // Review hold: omit legacy manifests, maps, models and other dashboard assets.
+  // The original public/ assets remain in the repository for an approved restoration.
+  publicDir: false,
   resolve: { alias: {
     "@": fileURLToPath(new URL("./src", import.meta.url)),
     "next/dynamic": fileURLToPath(new URL("./src/compat/dynamic.tsx", import.meta.url)),
