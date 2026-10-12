@@ -53,7 +53,7 @@ export default function ScmPanel({ data }: ScmPanelProps) {
                   <AlertTriangle className="w-3 h-3 text-[#FF1744]"/>
                   <span className="text-[10px] font-mono text-[var(--text-muted)] tracking-widest">{__t("CRITICAL SUPPLIERS")}</span>
                 </div>
-                {__tv(criticalSuppliers.length === 0 ? (<div className="text-[10px] font-mono text-[#00E676] px-2">{__t("\u2713 All monitored Tier 1/2 nodes operational.")}</div>) : (<div className="space-y-1">
+                {__tv(criticalSuppliers.length === 0 ? (<div className="text-[10px] font-mono text-[var(--text-muted)] px-2">{__t("Current supplier operating status is not verified.")}</div>) : (<div className="space-y-1">
                     {__tv(criticalSuppliers.map((s: any, i: number) => {
                     const threats = s.active_threats ? JSON.parse(s.active_threats) : [];
                     return (<div key={i} className="px-2 py-1.5 rounded border border-[#FF1744]/40 bg-[#FF1744]/10">
@@ -73,7 +73,7 @@ export default function ScmPanel({ data }: ScmPanelProps) {
                   <Anchor className="w-3 h-3 text-[#FF9500]"/>
                   <span className="text-[10px] font-mono text-[var(--text-muted)] tracking-widest">{__t("CONGESTED NODES")}</span>
                 </div>
-                {__tv((congestedPorts.length === 0 && riskyChokes.length === 0) ? (<div className="text-[10px] font-mono text-[#00E676] px-2">{__t("\u2713 Global maritime flow optimal.")}</div>) : (<div className="space-y-1">
+                {__tv((congestedPorts.length === 0 && riskyChokes.length === 0) ? (<div className="text-[10px] font-mono text-[var(--text-muted)] px-2">{__t("Current maritime congestion is not verified.")}</div>) : (<div className="space-y-1">
                     {__tv(riskyChokes.map((c: any, i: number) => (<div key={`c-${i}`} className="px-2 py-1.5 rounded hover:bg-white/5 transition-colors border-l-2" style={{ borderLeftColor: c.risk === 'CRITICAL' ? '#FF1744' : '#FF9500' }}>
                         <div className="flex justify-between items-center mb-0.5">
                           <span className="text-[11px] font-mono text-[#FF9500] font-bold">{__tv(c.name)}</span>

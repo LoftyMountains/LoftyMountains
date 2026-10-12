@@ -144,14 +144,24 @@ function ViewSegment({ active, onClick, title, icon: Icon, label, layoutId }: {
 const newsTransform = (d: {
     news?: unknown[];
     sources?: unknown[];
+    humanitarian_policy?: unknown;
+    excluded_sources?: unknown[];
     timestamp?: string;
 }) => ({
     news: d.news,
-    news_meta: { sources: d.sources ?? [], fetchedAt: d.timestamp ?? null },
+    news_meta: { sources: d.sources ?? [], fetchedAt: d.timestamp ?? null, humanitarian_policy: d.humanitarian_policy, excluded_sources: d.excluded_sources ?? [] },
     /* The reports that resolved to a place they name — the Live Alert Pins layer. */
     alert_pins: (d.news ?? []).filter(n => (n as {
         place?: unknown;
     } | null)?.place),
+});
+const maritimeTransform = (d: any) => ({
+    maritime_ports: d.ports ?? [], maritime_chokepoints: d.chokepoints ?? [], maritime_ships: d.ships ?? [],
+    maritime_meta: { status: d.status ?? 'unknown', coverage: d.coverage, source: d.source, assessment_status: d.assessment_status, ship_timestamp_basis: d.ship_timestamp_basis, snapshotAt: d.timestamp ?? null },
+});
+const firesTransform = (d: any) => ({
+    fires: d.fires ?? [],
+    fires_meta: { status: d.status ?? 'unknown', source: d.source, sources: d.sources, error: d.error, snapshotAt: d.timestamp ?? null },
 });
 /* One version label for the splash and the header, which used to disagree. */
 const APP_VERSION = 'V5.0';
@@ -1099,6 +1109,13 @@ export default function Dashboard() {
     } = {}): Promise<boolean> => {
         if (skipWhenHidden && typeof document !== 'undefined' && document.hidden)
             return false;
+        const endpoint = new URL(url, window.location.href).pathname;
+        const metadataKey = ({ '/api/fires': 'fires_meta', '/api/maritime': 'maritime_meta', '/api/gdelt-events': 'gdelt_events_meta' } as Record<string, string>)[endpoint];
+        const recordFailure = (error: string) => {
+            if (!metadataKey) return;
+            dataRef.current = { ...dataRef.current, [metadataKey]: { ...dataRef.current[metadataKey], status: 'unavailable', error, attemptAt: new Date().toISOString() } };
+            setDataVersion(v => v + 1);
+        };
         try {
             // Force the browser to bypass its local disk cache for real-time data
             const res = await fetch(url, { ...options, cache: 'no-store' });
@@ -1110,10 +1127,13 @@ export default function Dashboard() {
                 setBackendStatus('connected');
                 return true;
             }
+            const failure = await res.json().catch(() => null);
+            recordFailure(typeof failure?.error === 'string' ? failure.error : `HTTP ${res.status}`);
             return false;
         }
         catch (e) {
             console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e);
+            recordFailure(e instanceof Error ? e.message : 'Source unavailable');
             setBackendStatus('error');
             return false;
         }
@@ -1202,12 +1222,12 @@ export default function Dashboard() {
         }
         // Fires
         if (activeLayers.fires && !layerFetchedRef.current.has('fires')) {
-            fetchEndpoint(apiUrl('/api/fires'));
+            fetchEndpoint(apiUrl('/api/fires'), firesTransform);
             layerFetchedRef.current.add('fires');
         }
         // Maritime
         if (activeLayers.maritime && !layerFetchedRef.current.has('maritime')) {
-            fetchEndpoint(apiUrl('/api/maritime'), d => ({ maritime_ports: d.ports, maritime_chokepoints: d.chokepoints, maritime_ships: d.ships }));
+            fetchEndpoint(apiUrl('/api/maritime'), maritimeTransform);
             layerFetchedRef.current.add('maritime');
         }
         // Balloons
@@ -1278,7 +1298,7 @@ export default function Dashboard() {
         };
         // GDELT 2.0 geocoded events
         if ((activeLayers as any).gdelt_events) {
-            loadLayerOnce('gdelt_events', apiUrl('/api/gdelt-events?limit=600'), d => ({ gdelt_events: d.events }));
+            loadLayerOnce('gdelt_events', apiUrl('/api/gdelt-events?limit=600'), d => ({ gdelt_events: d.events ?? [], gdelt_events_meta: { status: d.status ?? 'unknown', reason: d.reason, policy: d.policy, source: d.source, snapshotAt: d.timestamp ?? null } }));
         }
         // Cloudflare Radar — one request backs both layers
         if ((activeLayers as any).cf_outages || (activeLayers as any).cf_attacks) {
@@ -1316,7 +1336,7 @@ export default function Dashboard() {
             const pollMaritime = () => {
                 if (stopped)
                     return;
-                fetchEndpoint(apiUrl('/api/maritime'), d => ({ maritime_ports: d.ports, maritime_chokepoints: d.chokepoints, maritime_ships: d.ships }));
+                fetchEndpoint(apiUrl('/api/maritime'), maritimeTransform);
                 vesselTimer = setTimeout(pollMaritime, vesselGapMs());
             };
             vesselTimer = setTimeout(pollMaritime, vesselGapMs());

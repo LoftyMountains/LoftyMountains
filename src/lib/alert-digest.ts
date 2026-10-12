@@ -5,14 +5,32 @@
  * what kind of event it describes) and a brief built from those threads. This
  * is keyword clustering, and it is labelled as such wherever it is shown: it
  * groups reports, it does not verify them. What it adds over a raw list is
- * perspective — whether a story is being carried by channels on opposing
- * sides, or by one side only.
+ * source roles and attributed coverage. Repetition and political affiliation
+ * do not establish independent corroboration.
  *
  * Pure and dependency-free, so the panel can build threads instantly and the
  * overview route can build the same brief on the server.
  */
 
+/** Legacy keys are retained for stored upstream records, not evidence of reliability. */
 export type Bloc = 'western' | 'russian' | 'regional' | 'independent';
+
+export type SourceRole = 'un-reporting' | 'humanitarian' | 'newsroom' | 'unknown';
+export const SOURCE_ROLES: Record<SourceRole, { label: string; color: string }> = {
+  'un-reporting': { label: 'UN reporting', color: '#73B8EB' },
+  humanitarian: { label: 'Humanitarian reporting', color: '#74C9B0' },
+  newsroom: { label: 'Newsroom reporting', color: '#CFB87C' },
+  unknown: { label: 'Unclassified source', color: '#A9A59B' },
+};
+export const SOURCE_ROLE_ORDER: SourceRole[] = ['un-reporting', 'humanitarian', 'newsroom', 'unknown'];
+export function sourceRole(value: unknown): SourceRole {
+  return typeof value === 'string' && Object.hasOwn(SOURCE_ROLES, value) ? value as SourceRole : 'unknown';
+}
+export const UNSC_REFERENCES = [
+  { label: 'Adopted resolutions', url: 'https://main.un.org/securitycouncil/en/content/resolutions-0' },
+  { label: 'Presidential statements', url: 'https://main.un.org/securitycouncil/en/content/presidential-statements' },
+  { label: 'Council press statements', url: 'https://main.un.org/securitycouncil/en/content/press-statements-0' },
+] as const;
 
 export const BLOCS: Record<Bloc, { label: string; short: string; color: string }> = {
   western: { label: 'Western / Ukrainian', short: 'WEST', color: '#4F9CFF' },
@@ -34,17 +52,20 @@ export const ALERT_KINDS: Record<AlertKind, { label: string; color: string }> = 
 };
 
 export interface DigestReport {
+  analysis_allowed?: boolean;
   id: string;
   title: string;
   text?: string | null;
   source: string;
   source_name?: string | null;
   bloc?: Bloc | null;
+  source_role?: SourceRole | null;
+  source_authority_note?: string | null;
   published?: string | null;
   link?: string | null;
   flag?: string | null;
   views?: number | null;
-  also_reported_by?: { source: string; source_name?: string | null; bloc?: Bloc | null }[] | null;
+  also_reported_by?: { source: string; source_name?: string | null; bloc?: Bloc | null; source_role?: SourceRole | null }[] | null;
 }
 
 export interface DigestQuake {
@@ -64,7 +85,9 @@ export interface AlertThread {
   /** Channels carrying it, cross-posts included. */
   sources: string[];
   blocs: Partial<Record<Bloc, number>>;
+  roles?: Partial<Record<SourceRole, number>>;
   /**
+   * Legacy compatibility only; not shown as reliability or corroboration.
    * 'cross'  — carried by both Western and Russian-aligned channels.
    * 'single' — two or more reports, all from one perspective.
    * 'mixed'  — anything else.
@@ -91,6 +114,7 @@ export interface AlertBrief {
     newest: string | null;
     oldest: string | null;
     breaking: number;
+    /** Legacy field name: counts repeated carriage, not verified corroboration. */
     corroborated: number;
   };
   facts: string[];
@@ -195,7 +219,8 @@ const TOPIC_RX = TOPICS.map(t => ({ ...t, rx: compile(t.terms) }));
 
 const haystack = (r: Pick<DigestReport, 'title' | 'text'>) => `${r.title}\n${(r.text || '').slice(0, 800)}`;
 
-export function classify(report: Pick<DigestReport, 'title' | 'text'>): { theatres: string[]; topics: string[] } {
+export function classify(report: Pick<DigestReport, 'title' | 'text' | 'analysis_allowed'>): { theatres: string[]; topics: string[] } {
+  if (report.analysis_allowed === false) return { theatres: [], topics: [] };
   const text = haystack(report);
   return {
     theatres: THEATRE_RX.filter(t => t.rx.test(text)).map(t => t.id),
@@ -225,10 +250,10 @@ export function timeAgo(v: string | number | null | undefined, now = Date.now())
 
 const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 
-function channelsOf(r: DigestReport): { name: string; bloc: Bloc | null }[] {
+function channelsOf(r: DigestReport): { name: string; bloc: Bloc | null; role: SourceRole }[] {
   return [
-    { name: r.source_name || r.source, bloc: r.bloc ?? null },
-    ...(r.also_reported_by || []).map(a => ({ name: a.source_name || a.source, bloc: a.bloc ?? null })),
+    { name: r.source_name || r.source, bloc: r.bloc ?? null, role: sourceRole(r.source_role) },
+    ...(r.also_reported_by || []).map(a => ({ name: a.source_name || a.source, bloc: a.bloc ?? null, role: sourceRole(a.source_role) })),
   ];
 }
 
@@ -261,7 +286,7 @@ export function speakerOf(title: string): string | null {
  * Items must be sorted newest first; groups keep that order, placed at their
  * newest quote.
  */
-export function groupStatements<T extends { source: string; title: string; ts: number }>(
+export function groupStatements<T extends { source: string; title: string; ts: number; analysis_allowed?: boolean }>(
   items: T[],
   windowMs = 2 * 3_600_000,
 ): { speaker: string | null; items: T[] }[] {
@@ -269,12 +294,12 @@ export function groupStatements<T extends { source: string; title: string; ts: n
   const open = new Map<string, { speaker: string; items: T[] }>();
 
   for (const item of items) {
-    const speaker = speakerOf(item.title);
+    const speaker = item.analysis_allowed === false ? null : speakerOf(item.title);
     if (!speaker) {
       groups.push({ speaker: null, items: [item] });
       continue;
     }
-    const key = `${item.source} ${speaker.toLowerCase()}`;
+    const key = `${item.source}\0${speaker.toLowerCase()}`;
     const group = open.get(key);
     // Within the window of the quote before it, so a speaker quoted days apart stays separate.
     if (group && group.items[group.items.length - 1].ts - item.ts <= windowMs) {
@@ -295,6 +320,7 @@ export function buildThreads(reports: DigestReport[], limit = 6): AlertThread[] 
   const groups = new Map<string, Group>();
 
   for (const r of reports) {
+    if (r.analysis_allowed === false) continue;
     const { theatres, topics } = classify(r);
     for (const theatre of theatres.length ? theatres : ['other']) {
       const g: Group = groups.get(theatre) ?? { reports: [], topics: new Map() };
@@ -310,10 +336,12 @@ export function buildThreads(reports: DigestReport[], limit = 6): AlertThread[] 
     const def = THEATRES.find(t => t.id === id)!;
     const sources = new Set<string>();
     const blocs: Partial<Record<Bloc, number>> = {};
+    const roles: Partial<Record<SourceRole, number>> = {};
     for (const r of g.reports) {
       for (const c of channelsOf(r)) {
         sources.add(c.name);
         if (c.bloc) blocs[c.bloc] = (blocs[c.bloc] || 0) + 1;
+        roles[c.role] = (roles[c.role] || 0) + 1;
       }
     }
     const blocCount = Object.keys(blocs).length;
@@ -336,6 +364,7 @@ export function buildThreads(reports: DigestReport[], limit = 6): AlertThread[] 
       itemIds: g.reports.map(r => r.id),
       sources: [...sources],
       blocs,
+      roles,
       perspective,
       topics: [...g.topics.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
         .map(([t]) => TOPICS.find(x => x.id === t)!.label),
@@ -358,13 +387,9 @@ export function buildThreads(reports: DigestReport[], limit = 6): AlertThread[] 
 
 /* ─────────────────────────── Brief ─────────────────────────── */
 
-function perspectivePhrase(t: AlertThread): string {
-  if (t.perspective === 'cross') return 'carried by both Western and Russian-aligned channels';
-  if (t.perspective === 'single') {
-    const only = Object.keys(t.blocs)[0] as Bloc | undefined;
-    return only ? `only ${BLOCS[only].label} channels are carrying it` : 'a single perspective';
-  }
-  return 'mixed sourcing';
+function sourceRolePhrase(t: AlertThread): string {
+  const roles = SOURCE_ROLE_ORDER.filter(role => t.roles?.[role]).map(role => SOURCE_ROLES[role].label);
+  return `${roles.length ? roles.join(' / ') : 'Unclassified source'}; source roles do not verify claims`;
 }
 
 export interface BriefInput {
@@ -373,7 +398,7 @@ export interface BriefInput {
 }
 
 export function buildAlertBrief({ news, earthquakes }: BriefInput, now = Date.now()): AlertBrief {
-  const reports = (news || []).filter(r => r && r.title);
+  const reports = (news || []).filter(r => r && r.title && r.analysis_allowed !== false);
   const quakes = (earthquakes || []).filter(q => typeof q?.magnitude === 'number');
   const threads = buildThreads(reports);
 
@@ -417,12 +442,12 @@ export function buildAlertBrief({ news, earthquakes }: BriefInput, now = Date.no
     const span = newest != null && oldest != null ? Math.max(1, Math.round((newest - oldest) / 3_600_000)) : null;
     facts.push(`${plural(reports.length, 'report')} from ${plural(channels.size, 'channel')}${span ? ` spanning ${span}h` : ''}; newest ${timeAgo(newest, now)}.`);
     if (breaking) facts.push(`${breaking} flagged as breaking by the channel that posted ${breaking === 1 ? 'it' : 'them'}.`);
-    if (corroborated) facts.push(`${plural(corroborated, 'story', 'stories')} carried by more than one channel.`);
+    if (corroborated) facts.push(`${plural(corroborated, 'story', 'stories')} carried by more than one channel; repeated reporting is not independent corroboration.`);
   }
   for (const t of threads) {
     const topics = t.topics.length ? ` — ${t.topics.join(', ')}` : '';
     const lead = t.lead ? ` Lead: "${t.lead.title}" (${t.lead.source}).` : '';
-    facts.push(`${t.label}: ${plural(t.count, 'report')} from ${plural(t.sources.length, 'channel')}${topics}; ${perspectivePhrase(t)}.${lead}`);
+    facts.push(`${t.label}: ${plural(t.count, 'report')} from ${plural(t.sources.length, 'channel')}${topics}; ${sourceRolePhrase(t)}.${lead}`);
   }
   for (const t of threads.slice(0, 3)) highlights.push(`${t.label} · ${t.count}`);
   if (seismic?.strongest) {
@@ -434,15 +459,15 @@ export function buildAlertBrief({ news, earthquakes }: BriefInput, now = Date.no
 
   let bottomLine: string;
   if (!reports.length && !seismic) {
-    bottomLine = 'No reports in the current feed window.';
+    bottomLine = 'No reports in the current feed window. Missing data does not establish safe conditions.';
   } else if (threads.length) {
     const [top, ...rest] = threads;
-    bottomLine = `${top.label} leads the feed: ${plural(top.count, 'report')} from ${plural(top.sources.length, 'channel')}, ${perspectivePhrase(top)}.`;
+    bottomLine = `${top.label} leads the feed: ${plural(top.count, 'report')} from ${plural(top.sources.length, 'channel')}, ${sourceRolePhrase(top)}.`;
     if (rest.length) bottomLine += ` Also active: ${rest.slice(0, 2).map(t => `${t.label} (${t.count})`).join(', ')}.`;
   } else if (reports.length) {
     bottomLine = `${plural(reports.length, 'report')} in the feed, none tied to a tracked theatre.`;
   } else {
-    bottomLine = 'No news reports in the current feed window.';
+    bottomLine = 'No news reports in the current feed window. Missing data does not establish safe conditions.';
   }
   if (seismic?.strongest && seismic.strongest.magnitude >= 5) {
     bottomLine += ` Strongest quake: M${seismic.strongest.magnitude.toFixed(1)} ${seismic.strongest.place}.`;
@@ -463,6 +488,6 @@ export function buildAlertBrief({ news, earthquakes }: BriefInput, now = Date.no
     },
     facts,
     highlights,
-    method: 'Keyword clustering by theatre and topic over the reports in the feed. Groups reports; does not verify them.',
+    method: 'Keyword clustering by theatre and topic over the reports in the feed. Groups reports; does not verify them. Source roles and repeated reporting do not establish independent corroboration or Security Council confirmation.',
   };
 }

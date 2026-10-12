@@ -154,6 +154,8 @@ export interface Odds {
  *   d…  a passage of the asker's own data, or `data` for all of it (`data`)
  */
 export interface ContextItem extends Located {
+  source_role?: string;
+  authority_note?: string;
   id: string;
   kind: 'news' | 'social' | 'quake' | 'market' | 'series' | 'odds' | 'data' | 'web' | 'wiki' | 'camera';
   title: string;

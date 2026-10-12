@@ -788,7 +788,7 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
                 } });
             map.addLayer({ id: 'choke-dots', type: 'circle', source: 'maritime-choke', paint: {
                     'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 4, 5, 7, 10, 12],
-                    'circle-color': ['match', ['get', 'risk'], 'CRITICAL', '#D32F2F', 'HIGH', '#E65100', 'ELEVATED', '#F9A825', '#26A69A'],
+                    'circle-color': ['match', ['get', 'risk'], 'CRITICAL', '#D32F2F', 'HIGH', '#E65100', 'ELEVATED', '#F9A825', 'LOW', '#26A69A', '#8A8880'],
                     'circle-opacity': 0.85,
                     'circle-stroke-width': 1.5, 'circle-stroke-color': '#E65100', 'circle-stroke-opacity': 0.4,
                 } });
@@ -1336,13 +1336,23 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
                 return;
             const p = e.features[0].properties as any;
             const coords = (e.features[0].geometry as any).coordinates;
+            const volcano = p.type === 'volcano';
+            const title = volcano ? 'VOLCANO REPORT' : 'SATELLITE THERMAL ANOMALY';
+            const source = p.source || 'Unknown';
+            const when = p.observed_at || [p.date, p.time].filter(Boolean).join(' ') || 'Unknown';
+            const sourceUrl = urlSafe(p.source_url || (!volcano ? `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;l:noaa20-viirs,viirs,modis_a,modis_t;@${coords[0]},${coords[1]},10z` : ''));
             popup(coords, `<div style="${pStyle}border:1px solid rgba(255,107,0,0.3);">
-        <div style="color:#FF6B00;font-size:12px;font-weight:700;margin-bottom:6px;">🔥 ACTIVE FIRE DETECTED</div>
+        <div style="color:#FF6B00;font-size:12px;font-weight:700;margin-bottom:6px;">${title}</div>
+        ${p.title ? `<div style="font-size:10px;margin-bottom:6px;">${htmlEsc(p.title)}</div>` : ''}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:9px;margin-bottom:8px;">
-          <div><span style="color:#5C5A54;">BRIGHTNESS</span><br/><span style="color:#FF6B00;">${p.brightness || '—'}K</span></div>
+          <div><span style="color:#5C5A54;">BRIGHTNESS</span><br/><span style="color:#FF6B00;">${Number.isFinite(p.brightness) ? `${p.brightness} K` : 'Unknown'}</span></div>
+          <div><span style="color:#5C5A54;">FIRE RADIATIVE POWER</span><br/><span>${Number.isFinite(p.frp) ? `${p.frp} MW` : 'Unknown'}</span></div>
           <div><span style="color:#5C5A54;">COORDS</span><br/><span style="color:#E8E6E0;">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
+          <div><span style="color:#5C5A54;">SOURCE</span><br/><span>${htmlEsc(source)}</span></div>
         </div>
-        <a href="https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;l:noaa20-viirs,viirs,modis_a,modis_t;@${coords[0]},${coords[1]},10z" target="_blank" style="${linkStyle}color:#FF6B00;border:1px solid rgba(255,107,0,0.4);background:rgba(255,107,0,0.1);">🛰️ NASA FIRMS MAP</a>
+        <div style="font-size:9px;color:#8A8880;">SOURCE DATE / TIME (AS SUPPLIED)<br/>${htmlEsc(when)}</div>
+        <div style="font-size:9px;color:#8A8880;margin-top:6px;">${volcano ? 'Volcano event reported by the source; thermal measurements are unavailable.' : 'A satellite thermal anomaly does not establish a wildfire, explosion or military strike.'}</div>
+        ${sourceUrl !== '#' ? `<a href="${htmlEsc(sourceUrl)}" target="_blank" rel="noopener noreferrer" style="${linkStyle}color:#FF6B00;border:1px solid rgba(255,107,0,0.4);background:rgba(255,107,0,0.1);">SOURCE REFERENCE</a>` : ''}
       </div>`);
         });
         // ── Malware Threats (Abuse.ch) ──
@@ -1598,20 +1608,22 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
                 return;
             const p = e.features[0].properties as any;
             const coords = (e.features[0].geometry as any).coordinates;
-            const color = p.risk_level === 'CRITICAL' ? '#FF1744' : p.risk_level === 'HIGH' ? '#FF9500' : '#00BCD4';
-            const activeThreats = p.active_threats ? JSON.parse(p.active_threats) : [];
+            const color = '#8A8880';
+            let activeThreats: string[] = [];
+            try { const parsed = typeof p.active_threats === 'string' ? JSON.parse(p.active_threats) : p.active_threats; activeThreats = Array.isArray(parsed) ? parsed : []; } catch { /* Unknown observations remain empty. */ }
             let threatsHtml = '';
             if (activeThreats.length > 0) {
                 threatsHtml = `<div style="margin-top:8px;padding-top:6px;border-top:1px solid ${color}40;color:${color};font-size:9px;font-weight:bold;">
-          ACTIVE THREATS:<br/>${activeThreats.map((t: string) => `⚠ ${htmlEsc(t)}`).join('<br/>')}
+          NEARBY OBSERVATIONS:<br/>${activeThreats.map((t: string) => htmlEsc(t)).join('<br/>')}
         </div>`;
             }
             popup(coords, `<div style="${pStyle}border:1px solid ${color}40;">
         <div style="color:${color};font-size:12px;font-weight:700;margin-bottom:4px;">🏢 ${htmlEsc(p.name)}</div>
         <div style="font-size:9px;color:#aaa;margin-bottom:8px;">${htmlEsc(p.category)} | ${htmlEsc(p.city)}, ${htmlEsc(p.country)}</div>
         <div style="display:grid;grid-template-columns:1fr;gap:4px;font-size:11px;">
-          <div><span style="color:#5C5A54;font-size:9px;">SCM RISK LEVEL</span><br/><span style="color:${color};font-weight:bold;">${p.risk_level}</span></div>
+          <div><span style="color:#5C5A54;font-size:9px;">RISK ASSESSMENT</span><br/><span style="color:${color};font-weight:bold;">Not assessed</span></div>
         </div>
+        <div style="font-size:9px;color:#8A8880;margin-top:6px;">Nearby observations do not establish damage or operational disruption.</div>
         ${threatsHtml}
       </div>`);
         });
@@ -1764,7 +1776,7 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
             const congestionHtml = p.congestion ? `
         <div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1);">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
-            <div><span style="color:#5C5A54;font-size:9px;">CONGESTION</span><br/><span style="color:${p.congestion === 'SEVERE' ? '#FF1744' : p.congestion === 'CONGESTED' ? '#FF9500' : '#00E676'};font-weight:bold;font-size:10px;">${p.congestion}</span></div>
+            <div><span style="color:#5C5A54;font-size:9px;">CONGESTION</span><br/><span style="color:#8A8880;font-weight:bold;font-size:10px;">Not assessed</span></div>
             <div><span style="color:#5C5A54;font-size:9px;">EST. DWELL TIME</span><br/><span style="color:#E8E6E0;font-weight:bold;font-size:10px;">${p.dwell_time || 'Unknown'}</span></div>
           </div>
         </div>` : '';
@@ -1775,6 +1787,8 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         ${p.fleet ? `<div style="font-size:9px;color:#aaa;">Fleet: <span style="color:${typeColor};font-weight:bold;">${p.fleet}</span></div>` : ''}
         ${p.rank ? `<div style="font-size:9px;color:#aaa;">Global Rank: <span style="color:${typeColor};font-weight:bold;">#${p.rank}</span></div>` : ''}
         ${congestionHtml}
+        <div style="font-size:9px;color:#8A8880;margin-top:6px;">OBSERVED VESSELS WITHIN 50 KM<br/>${Number.isFinite(p.observed_nearby_ships) ? p.observed_nearby_ships : 'Unknown'}</div>
+        <div style="font-size:9px;color:#8A8880;margin-top:6px;">Static geographic reference. AIS coverage is incomplete; observed vessels do not establish congestion or waiting time.</div>
       </div>`);
         });
         // ── Maritime Chokepoints ──
@@ -1783,11 +1797,13 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
             if (!p)
                 return;
             const coords = (e.features![0].geometry as any).coordinates;
-            const riskCol = p.risk === 'CRITICAL' ? '#FF1744' : p.risk === 'HIGH' ? '#FF9500' : p.risk === 'ELEVATED' ? '#FFD700' : '#00E676';
+            const riskCol = '#8A8880';
             popup(coords, `<div style="${pStyle}border:1px solid ${riskCol}40;">
         <div style="color:#FF9500;font-weight:bold;font-size:11px;margin-bottom:4px;">${p.name}</div>
         <div style="font-size:9px;color:#aaa;">Traffic: <span style="color:#fff;">${p.traffic}</span></div>
-        <div style="font-size:9px;color:#aaa;">Risk: <span style="color:${riskCol};font-weight:bold;">${p.risk}</span></div>
+        <div style="font-size:9px;color:#aaa;">RISK ASSESSMENT: <span style="color:${riskCol};font-weight:bold;">Not assessed</span></div>
+        <div style="font-size:9px;color:#8A8880;margin-top:6px;">OBSERVED VESSELS WITHIN 100 KM<br/>${Number.isFinite(p.observed_nearby_ships) ? p.observed_nearby_ships : 'Unknown'}</div>
+        <div style="font-size:9px;color:#8A8880;margin-top:6px;">Static geographic reference. Vessel counts do not establish security or humanitarian risk.</div>
       </div>`);
         });
         // ── Live News (opens feed viewer) ──
@@ -2274,7 +2290,7 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     useEffect(() => {
         if (!mapReady)
             return;
-        setGeo('fires', activeLayers.fires && data.fires ? data.fires.map((f: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [f.lng, f.lat] }, properties: { brightness: f.brightness } })) : []);
+        setGeo('fires', activeLayers.fires && data.fires ? data.fires.map((f: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [f.lng, f.lat] }, properties: { brightness: f.brightness, frp: f.frp, type: f.type, title: f.title, source: f.source, source_url: f.source_url, observed_at: f.observed_at, date: f.date, time: f.time } })) : []);
     }, [mapReady, data.fires, activeLayers.fires, setGeo]);
     useEffect(() => {
         if (!mapReady)
@@ -2289,8 +2305,8 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     useEffect(() => {
         if (!mapReady)
             return;
-        setGeo('maritime', activeLayers.maritime && data.maritime_ports ? data.maritime_ports.map((p: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lng, p.lat] }, properties: { name: p.name, country: p.country, type: p.type, volume: p.volume, fleet: p.fleet, rank: p.rank } })) : []);
-        setGeo('maritime-choke', activeLayers.maritime && data.maritime_chokepoints ? data.maritime_chokepoints.map((c: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [c.lng, c.lat] }, properties: { name: c.name, traffic: c.traffic, risk: c.risk } })) : []);
+        setGeo('maritime', activeLayers.maritime && data.maritime_ports ? data.maritime_ports.map((p: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lng, p.lat] }, properties: { name: p.name, country: p.country, type: p.type, volume: p.volume, fleet: p.fleet, rank: p.rank, congestion: p.congestion, dwell_time: p.dwell_time, observed_nearby_ships: p.observed_nearby_ships, assessment: p.assessment } })) : []);
+        setGeo('maritime-choke', activeLayers.maritime && data.maritime_chokepoints ? data.maritime_chokepoints.map((c: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [c.lng, c.lat] }, properties: { name: c.name, traffic: c.traffic, risk: c.risk, observed_nearby_ships: c.observed_nearby_ships, assessment: c.assessment } })) : []);
         setGeo('maritime-ships', activeLayers.maritime && data.maritime_ships ? data.maritime_ships.map((s: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [s.lng, s.lat] }, properties: { name: s.name || s.mmsi?.toString(), type: s.type || 'cargo', speed: s.speed, heading: s.heading, destination: s.destination, flag: s.flag } })) : []);
     }, [mapReady, data.maritime_ports, data.maritime_chokepoints, data.maritime_ships, activeLayers.maritime, setGeo]);
     useEffect(() => {
@@ -2460,21 +2476,8 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
                 setGeo('conflict-zones', [...zoneFeatures, ...eventFeatures]);
             }
             catch (e) {
-                // Fallback: if API fails, use minimal known zones
-                const FALLBACK_ZONES = [
-                    { label: 'UKRAINE WAR', severity: 'war', lat: 48.5, lng: 31.2, description: 'Ongoing Russian invasion of Ukraine.', sourceUrl: 'https://liveuamap.com/' },
-                    { label: 'GAZA CONFLICT', severity: 'war', lat: 31.35, lng: 34.35, description: 'Active military operations in Gaza.', sourceUrl: 'https://israelpalestine.liveuamap.com/' },
-                    { label: 'SUDAN CIVIL WAR', severity: 'war', lat: 15.0, lng: 30.0, description: 'SAF vs RSF armed conflict.', sourceUrl: 'https://sudan.liveuamap.com/' },
-                    { label: 'YEMEN WAR', severity: 'war', lat: 15.5, lng: 48.0, description: 'Houthi operations and Red Sea threats.', sourceUrl: 'https://yemen.liveuamap.com/' },
-                    { label: 'MYANMAR CONFLICT', severity: 'war', lat: 19.5, lng: 96.5, description: 'Military junta vs opposition forces.', sourceUrl: 'https://myanmar.liveuamap.com/' },
-                    { label: 'SYRIA', severity: 'high', lat: 35.0, lng: 38.5, description: 'Ongoing civil conflict.', sourceUrl: 'https://syria.liveuamap.com/' },
-                ];
-                const fallbackFeatures = FALLBACK_ZONES.map(z => ({
-                    type: 'Feature' as const,
-                    geometry: { type: 'Point' as const, coordinates: [z.lng, z.lat] },
-                    properties: { label: z.label, severity: z.severity, description: z.description, sourceUrl: z.sourceUrl },
-                }));
-                setGeo('conflict-zones', fallbackFeatures);
+                // A failed feed cannot create static war claims or invented incident locations.
+                setGeo('conflict-zones', []);
             }
         })();
         return () => { cancelled = true; };

@@ -5,16 +5,24 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, ChevronUp, MapPin, ExternalLink, Radio, Maximize2, Minimize2, Search, X, RefreshCw, Image as ImageIcon, Play, Eye, Repeat2, CornerDownRight, Waves, Layers, AlertTriangle, } from 'lucide-react';
 import AiOverview from './AiOverview';
-import { ALERT_KINDS, BLOCS, BLOC_ORDER, buildThreads, groupStatements, timeAgo, type AlertKind, type Bloc, type DigestReport, } from '@/lib/alert-digest';
+import { ALERT_KINDS, BLOCS, SOURCE_ROLES, SOURCE_ROLE_ORDER, UNSC_REFERENCES, sourceRole, buildThreads, groupStatements, timeAgo, type AlertKind, type Bloc, type SourceRole, type DigestReport, } from '@/lib/alert-digest';
 interface SourceHealth {
+    id?: string;
     handle: string;
     name: string;
-    lean: string;
-    bloc: Bloc;
-    kind?: 'telegram' | 'wire';
+    source_role?: SourceRole;
+    authority_note?: string;
+    analysis_allowed?: boolean;
     count: number;
     latest: string | null;
+    status?: 'ok' | 'empty' | 'stale' | 'unavailable';
+    last_attempt_at?: string | null;
+    last_success_at?: string | null;
+    last_checked_at?: string | null;
+    error?: string | null;
+    stale?: boolean;
 }
+interface ExcludedSource { id: string; name: string; admission_reason: string }
 /** The slice of dashboard state this panel reads. */
 interface LiveAlertsData {
     news?: unknown[];
@@ -23,6 +31,8 @@ interface LiveAlertsData {
     news_meta?: {
         sources?: SourceHealth[];
         fetchedAt?: string | null;
+        excluded_sources?: ExcludedSource[];
+        humanitarian_policy?: unknown;
     };
 }
 /** Where to fly: `alertId` also opens that report's pin on the map. */
@@ -43,41 +53,6 @@ interface LiveAlertsProps {
     onRefresh?: () => Promise<unknown> | void;
 }
 const ACCENT = '#FF4081';
-// Built-in live feeds — verified video IDs (synced with /api/live-news)
-const BUILTIN_FEEDS = [
-    // ── North America ──
-    { name: 'NBC News NOW', city: 'New York', country: 'US', lat: 40.759, lng: -73.980, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCeY0bbntWzzVIaj2z3QigXg&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
-    { name: 'CBS News 24/7', city: 'New York', country: 'US', lat: 40.764, lng: -73.973, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC8p1vwvWtl6T73JiExfWs1g&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
-    { name: 'ABC News Live', city: 'New York', country: 'US', lat: 40.763, lng: -73.979, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCBi2mrWuNuyYy4gbM6fU18Q&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
-    { name: 'Bloomberg TV', city: 'New York', country: 'US', lat: 40.756, lng: -73.988, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC_vQ72b7v5n2938v9d5c80w&autoplay=1&mute=1', category: 'finance', region: 'americas' },
-    { name: 'C-SPAN', city: 'Washington DC', country: 'US', lat: 38.897, lng: -77.036, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCb--64Gl51jIEVE-GLDAVTg&autoplay=1&mute=1', category: 'government', region: 'americas' },
-    { name: 'CBC News', city: 'Toronto', country: 'CA', lat: 43.644, lng: -79.387, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCKy1dAqELon0zgzZPOz9SVw&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
-    // ── Europe ──
-    { name: 'Sky News', city: 'London', country: 'GB', lat: 51.500, lng: -0.118, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCoMdktPbSTixAyNGwb-UYkQ&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
-    { name: 'France 24 EN', city: 'Paris', country: 'FR', lat: 48.830, lng: 2.280, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCQfwfsi5VrQ8yKZ-UWmAEFg&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
-    { name: 'DW News', city: 'Berlin', country: 'DE', lat: 52.508, lng: 13.376, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCknLrEdhRCp1aegoMqRaCZg&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
-    { name: 'Euronews', city: 'Lyon', country: 'FR', lat: 45.764, lng: 4.836, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCtUbOIRGKZkW7555n6x6q6g&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
-    { name: 'TRT World', city: 'Istanbul', country: 'TR', lat: 41.008, lng: 28.978, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC7fWeaHZQg1p9-4v98L1D1A&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
-    { name: 'UKRINFORM', city: 'Kyiv', country: 'UA', lat: 50.450, lng: 30.523, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCaDkCK6iFHPE0lmpaYL-WxQ&autoplay=1&mute=1', category: 'conflict', region: 'europe' },
-    // ── Middle East ──
-    { name: 'Al Jazeera EN', city: 'Doha', country: 'QA', lat: 25.286, lng: 51.534, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCNye-wNBqNL5ZzHSJj3l8Bg&autoplay=1&mute=1', category: 'mainstream', region: 'middleeast' },
-    { name: 'Al Mayadeen', city: 'Beirut', country: 'LB', lat: 33.8886, lng: 35.4955, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCZCFHCU-2eGF7V5ciMkoPHw&autoplay=1&mute=1', category: 'conflict', region: 'middleeast' },
-    { name: 'LBCI Lebanon', city: 'Beirut', country: 'LB', lat: 33.8930, lng: 35.5018, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCpE6gpKewomi17XDyPfpFjA&autoplay=1&mute=1', category: 'mainstream', region: 'middleeast' },
-    // ── Asia Pacific ──
-    { name: 'NHK World', city: 'Tokyo', country: 'JP', lat: 35.690, lng: 139.692, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCSPEjw8F2nQDtmUKPFNF7_A&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
-    { name: 'CNA 24/7', city: 'Singapore', country: 'SG', lat: 1.290, lng: 103.852, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC83jt4dlz1Gjl58fzQrrKZg&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
-    { name: 'WION', city: 'New Delhi', country: 'IN', lat: 28.614, lng: 77.209, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC_gUM8rL-Lrg6O3adPW9K1g&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
-    { name: 'Arirang', city: 'Seoul', country: 'KR', lat: 37.566, lng: 126.978, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCw9-5Y1CjW7Qy1Yf5q1y2-Q&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
-    { name: 'ABC AU', city: 'Sydney', country: 'AU', lat: -33.868, lng: 151.209, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC5iLnYoF4Ryb63YdGD9RfWQ&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
-    // ── Africa ──
-    { name: 'Africanews', city: 'Pointe-Noire', country: 'CG', lat: -4.778, lng: 11.865, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC5T2fB_W0Z31T0c8yN36a8A&autoplay=1&mute=1', category: 'mainstream', region: 'africa' },
-    { name: 'SABC News', city: 'Johannesburg', country: 'ZA', lat: -26.204, lng: 28.047, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC8yH-uI81UUtEMDsowQyx1g&autoplay=1&mute=1', category: 'mainstream', region: 'africa' },
-    // ── Latin America ──
-    { name: 'teleSUR EN', city: 'Caracas', country: 'VE', lat: 10.491, lng: -66.902, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCmuTmpLY35O3csvhyA6vrkg&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
-];
-const FEED_REGIONS: Record<string, string> = {
-    americas: 'AMERICAS', europe: 'EUROPE', middleeast: 'MIDDLE EAST', asia: 'ASIA PACIFIC', africa: 'AFRICA',
-};
 type Tab = 'all' | 'news' | 'warnings' | 'quakes' | 'feeds';
 /** The official warnings from /api/weather — NOAA/NWS, GDACS and NASA EONET. */
 export interface WarningAlert {
@@ -102,10 +77,13 @@ interface Carrier {
     source_name: string;
     lean: string | null;
     bloc: Bloc | null;
+    source_role: SourceRole;
+    source_authority_note: string | null;
     link: string | null;
     published: string | null;
 }
 interface NewsAlert {
+    analysis_allowed: boolean;
     kind: 'news';
     id: string;
     ts: number;
@@ -118,6 +96,8 @@ interface NewsAlert {
     source_name: string;
     lean: string | null;
     bloc: Bloc | null;
+    source_role: SourceRole;
+    source_authority_note: string | null;
     flag: string | null;
     alertKind: AlertKind;
     /** The place the report names, when one resolved; otherwise `anchor` is a country centroid. */
@@ -208,6 +188,8 @@ function toNews(raw: unknown): NewsAlert | null {
             source_name: str(c.source_name) ?? cSource,
             lean: str(c.lean),
             bloc: isBloc(c.bloc) ? c.bloc : null,
+            source_role: sourceRole(c.source_role),
+            source_authority_note: str(c.source_authority_note),
             link: webUrl(c.link),
             published: str(c.published),
         };
@@ -231,6 +213,7 @@ function toNews(raw: unknown): NewsAlert | null {
         : null;
     return {
         kind: 'news',
+        analysis_allowed: a.analysis_allowed !== false,
         id: str(a.id) ?? str(a.link) ?? title,
         ts,
         title,
@@ -242,6 +225,8 @@ function toNews(raw: unknown): NewsAlert | null {
         source_name: sourceName,
         lean,
         bloc: isBloc(a.bloc) ? a.bloc : null,
+        source_role: sourceRole(a.source_role),
+        source_authority_note: str(a.source_authority_note),
         flag: str(a.flag),
         alertKind: a.alert_kind === 'rocket' || a.alert_kind === 'event' ? a.alert_kind : 'news',
         place,
@@ -322,7 +307,7 @@ export function urgency(item: AlertItem): number {
 }
 const quakeColor = (m: number) => (m >= 6 ? '#FF3D3D' : m >= 5 ? '#FF9500' : m >= 4 ? '#FFD700' : '#9CCC65');
 const PAGER_COLORS: Record<string, string> = { green: '#00E676', yellow: '#FFD700', orange: '#FF9500', red: '#FF3D3D' };
-const blocColor = (b: Bloc | null) => (b ? BLOCS[b].color : '#5C5A54');
+const roleColor = (role: SourceRole) => SOURCE_ROLES[role].color;
 function compactCount(n: number): string {
     if (n >= 1e6)
         return `${(n / 1e6).toFixed(1)}M`;
@@ -355,7 +340,7 @@ function NewsCard({ item, now, open, wide, onToggle, onLocate }: {
     onLocate: (lat: number, lng: number, options?: LocateOptions) => void;
 }) {
     __useLocale();
-    const color = blocColor(item.bloc);
+    const color = roleColor(item.source_role);
     const fresh = now - item.ts < 15 * 60000;
     const [mediaFailed, setMediaFailed] = useState(false);
     const [videoFailed, setVideoFailed] = useState(false);
@@ -367,9 +352,9 @@ function NewsCard({ item, now, open, wide, onToggle, onLocate }: {
           <div className="flex-1 min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[9.5px] font-mono uppercase tracking-wider">
             {__tv(fresh && <span className="w-1.5 h-1.5 rounded-full animate-osiris-pulse" style={{ background: ACCENT }} title={__t("Posted in the last 15 minutes")}/>)}
             <span className="font-semibold text-[#E8E6E0]">{item.source_name}</span>
-            {__tv(item.lean && <span style={{ color }} title={__tv(item.bloc ? BLOCS[item.bloc].label : undefined)}>{__tv(item.lean)}</span>)}
+            <span style={{ color }}>{__t(SOURCE_ROLES[item.source_role].label)}</span>
           </div>
-          <time dateTime={item.published} title={__tv(new Date(item.ts).toLocaleString())} className="flex-shrink-0 text-[9.5px] font-mono text-[#8A8880]">
+          <time dateTime={item.published} title={new Date(item.ts).toISOString()} className="flex-shrink-0 text-[9.5px] font-mono text-[#8A8880]">
             {__tv(timeAgo(item.ts, now))}
           </time>
         </div>
@@ -431,9 +416,9 @@ function NewsCard({ item, now, open, wide, onToggle, onLocate }: {
               <div className="mb-1 text-[8.5px] font-mono tracking-widest text-[#5C5A54]">{__t("ALSO CARRIED BY")}</div>
               <ul className="space-y-0.5">
                 {__tv(item.carriers.map(c => (<li key={c.source} className="flex items-center gap-1.5 text-[10px] font-mono">
-                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: blocColor(c.bloc) }}/>
+                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: roleColor(c.source_role) }}/>
                     <span className="text-[#C9C5BC]">{c.source_name}</span>
-                    {__tv(c.lean && <span className="truncate uppercase text-[8.5px]" style={{ color: blocColor(c.bloc) }}>{__tv(c.lean)}</span>)}
+                    <span className="text-[8.5px]" style={{ color: roleColor(c.source_role) }}>{__t(SOURCE_ROLES[c.source_role].label)}</span>
                     <span className="ml-auto flex-shrink-0 text-[#5C5A54]">{__tv(c.published ? timeAgo(c.published, now) : '')}</span>
                     {__tv(c.link && (<a href={c.link} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 text-[var(--cyan-primary)] hover:opacity-70" aria-label={__t("Open {0} post", c.source_name)}>
                         <ExternalLink className="w-2.5 h-2.5"/>
@@ -453,7 +438,7 @@ function NewsCard({ item, now, open, wide, onToggle, onLocate }: {
             {__tv(item.coords && !item.place && (<button type="button" onClick={() => onLocate(item.coords![0], item.coords![1])} title={__tv(item.anchor ? `Approximate: the centroid for "${item.anchor}", not the event location` : 'Approximate location')} className="inline-flex items-center gap-1 rounded border border-white/10 px-2 py-1 text-[9.5px] font-mono tracking-wider text-[#9B978E] hover:bg-white/5">
                 <MapPin className="w-2.5 h-2.5"/> ≈ {__tv((item.anchor || 'region').toUpperCase())}
               </button>))}
-            {__tv(item.bloc && (<span className="ml-auto text-[8.5px] font-mono tracking-wider" style={{ color }}>{__tv(BLOCS[item.bloc].label.toUpperCase())}</span>))}
+            <span className="text-[9px] text-[#A9A59B]">{__tv(item.source_authority_note ?? "Source role does not establish independent verification.")}</span>
           </div>
         </div>))}
     </article>);
@@ -477,7 +462,7 @@ function StatementCard({ speaker, items, now, open, wide, onToggle }: {
 }) {
     __useLocale();
     const lead = items[0];
-    const color = blocColor(lead.bloc);
+    const color = roleColor(lead.source_role);
     const fresh = now - lead.ts < 15 * 60000;
     return (<article className={`rounded-lg border border-l-2 transition-colors ${wide ? 'xl:col-span-2' : ''} ${open ? 'bg-[#15151A] border-[#3A3A38]' : 'bg-[#111111]/70 border-[#26262A] hover:bg-[#17171B] hover:border-[#34343A]'}`} style={{ borderLeftColor: color }}>
       <button type="button" onClick={onToggle} aria-expanded={open} className="w-full text-left px-2.5 pt-2 pb-1.5 outline-none focus-visible:ring-1 focus-visible:ring-white/30 rounded-lg">
@@ -485,7 +470,7 @@ function StatementCard({ speaker, items, now, open, wide, onToggle }: {
           <div className="flex-1 min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[9.5px] font-mono uppercase tracking-wider">
             {__tv(fresh && <span className="w-1.5 h-1.5 rounded-full animate-osiris-pulse" style={{ background: ACCENT }} title={__t("Posted in the last 15 minutes")}/>)}
             <span className="font-semibold text-[#E8E6E0]">{lead.source_name}</span>
-            {__tv(lead.lean && <span style={{ color }}>{__tv(lead.lean)}</span>)}
+            <span style={{ color }}>{__t(SOURCE_ROLES[lead.source_role].label)}</span>
           </div>
           <time dateTime={lead.published} title={__tv(new Date(lead.ts).toLocaleString())} className="flex-shrink-0 text-[9.5px] font-mono text-[#8A8880]">
             {__tv(timeAgo(lead.ts, now))}
@@ -600,13 +585,56 @@ function WarningCard({ item, now, onLocate }: {
       </div>
     </article>);
 }
-export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pinsOn = false, onTogglePins, onPinnedChange }: LiveAlertsProps) {
+function SourcePanel({ sources, excluded }: { sources: SourceHealth[]; excluded: ExcludedSource[] }) {
+    const { locale } = __useLocale();
+    const timestamp = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value))
+        ? `${new Date(value).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB', { timeZone: 'Asia/Shanghai', hourCycle: 'h23' })} (UTC+8)`
+        : __t('Unknown');
+    const statusLabels = { ok: 'Check successful', empty: 'Valid empty result', stale: 'Stale records retained', unavailable: 'Unavailable' };
+    return (<details className="rounded-md border border-[#CFB87C]/25 bg-[#CFB87C]/[0.04] text-[10px] leading-relaxed text-[#C9C5BC]">
+      <summary className="cursor-pointer px-2 py-1.5 font-medium text-[#CFB87C] focus-visible:outline focus-visible:outline-1 focus-visible:outline-[#CFB87C]">{__t('Sources and humanitarian standards')}</summary>
+      <div className="max-h-72 space-y-3 overflow-y-auto px-2 pb-2 styled-scrollbar">
+        <p>{__t('Civilian protection, humanitarian access and essential services receive the same standard of care for everyone affected by war.')}</p>
+        <p>{__t('Reports remain attributed to their publishers. UN reporting is not automatically a Security Council decision or independent verification.')}</p>
+        <div>
+          <h5 className="font-medium text-[#E8E6E0]">{__t('Security Council reference documents')}</h5>
+          <ul className="mt-1 space-y-1">
+            {UNSC_REFERENCES.map(reference => <li key={reference.url}><a href={reference.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#CFB87C] underline underline-offset-2"><ExternalLink className="h-2.5 w-2.5"/>{__t(reference.label)}</a></li>)}
+          </ul>
+          <p className="mt-1 text-[#A9A59B]">{__t('Reference links do not confirm individual headlines. No linked Council decision does not mean an event did not occur.')}</p>
+        </div>
+        <p>{__t('Source checks are independent of the number of reports. Missing or failed data does not establish safe conditions.')}</p>
+        {sources.length === 0 && <p role="status">{__t('Source status is unknown until a source report is available.')}</p>}
+        {SOURCE_ROLE_ORDER.map(role => {
+            const group = sources.filter(source => sourceRole(source.source_role) === role);
+            return group.length > 0 && <section key={role}>
+              <h5 className="mb-1 font-medium" style={{ color: SOURCE_ROLES[role].color }}>{__t(SOURCE_ROLES[role].label)}</h5>
+              <ul className="space-y-2">{group.map(source => <li key={source.id ?? source.handle} className="rounded border border-white/10 p-2 break-words">
+                <div className="flex flex-wrap justify-between gap-x-2"><strong className="text-[#E8E6E0]">{source.name}</strong><span>{__t('{0} records', source.count)}</span></div>
+                <p className={source.stale || source.status === 'unavailable' ? 'text-[#FFB76B]' : 'text-[#C9C5BC]'}>{__t((source.status ? statusLabels[source.status] : undefined) ?? 'Status unknown')}{source.stale && source.status !== 'stale' ? ` · ${__t('Stale records retained')}` : ''}</p>
+                {source.authority_note && <p className="mt-1">{__tv(source.authority_note)}</p>}
+                {source.analysis_allowed === false && <p className="mt-1 text-[#CFB87C]">{__t('Display only; excluded from automated analysis.')}</p>}
+                <dl className="mt-1 space-y-0.5 text-[9px] text-[#A9A59B]">
+                  <div><dt className="inline">{__t('Last attempt')}: </dt><dd className="inline">{timestamp(source.last_attempt_at)}</dd></div>
+                  <div><dt className="inline">{__t('Last retrieval')}: </dt><dd className="inline">{timestamp(source.last_success_at)}</dd></div>
+                  <div><dt className="inline">{__t('Last check')}: </dt><dd className="inline">{timestamp(source.last_checked_at)}</dd></div>
+                  <div><dt className="inline">{__t('Latest source publication')}: </dt><dd className="inline">{timestamp(source.latest)}</dd></div>
+                </dl>
+                {source.error && <p className="mt-1 text-[#FFB76B]">{__t('Collection issue')}: {__tv(source.error)}</p>}
+              </li>)}</ul>
+            </section>;
+        })}
+        {excluded.length > 0 && <details><summary className="cursor-pointer text-[#A9A59B]">{__t('{0} sources not admitted', excluded.length)}</summary><ul className="mt-1 space-y-1">{excluded.map(source => <li key={source.id}><strong>{source.name}</strong>: {__tv(source.admission_reason)}</li>)}</ul></details>}
+      </div>
+    </details>);
+}
+export default function LiveAlerts({ data, onLocate, onRefresh, pinsOn = false, onTogglePins, onPinnedChange }: LiveAlertsProps) {
     __useLocale();
     const [expanded, setExpanded] = useState(true);
     const [maximized, setMaximized] = useState(false);
     const [tab, setTab] = useState<Tab>('all');
     const [query, setQuery] = useState('');
-    const [bloc, setBloc] = useState<Bloc | 'all'>('all');
+    const [role, setRole] = useState<SourceRole | 'all'>('all');
     const [threadId, setThreadId] = useState<string | null>(null);
     /** Set from the "right now" strip: show only rocket reports, or only breaking ones. */
     const [newsKind, setNewsKind] = useState<'rocket' | 'breaking' | null>(null);
@@ -614,6 +642,8 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
     const [refreshing, setRefreshing] = useState(false);
     const [overviewOpen, setOverviewOpen] = useState(false);
     const listRef = useRef<HTMLDivElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const maximizeRef = useRef<HTMLButtonElement>(null);
     const [now, setNow] = useState(() => Date.now());
     // Relative times ("12m ago") stay current while the panel is open.
     useEffect(() => {
@@ -623,10 +653,22 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
     useEffect(() => {
         if (!maximized)
             return;
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape')
-            setMaximized(false); };
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        const focusable = () => Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input, select, summary, [tabindex="0"]') ?? []).filter(element => element.getClientRects().length > 0);
+        focusable()[0]?.focus();
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') { e.preventDefault(); setMaximized(false); }
+            if (e.key === 'Tab') {
+                const elements = focusable();
+                const first = elements[0];
+                const last = elements[elements.length - 1];
+                if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+            }
+        };
         window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = previousOverflow; requestAnimationFrame(() => maximizeRef.current?.focus()); };
     }, [maximized]);
     const news = useMemo(() => (data.news ?? []).map(toNews).filter((n): n is NewsAlert => n !== null).sort((a, b) => b.ts - a.ts), [data.news]);
     const quakes = useMemo(() => (data.earthquakes ?? []).map(toQuake).filter((q): q is QuakeAlert => q !== null).sort((a, b) => b.ts - a.ts).slice(0, 15), [data.earthquakes]);
@@ -639,40 +681,51 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
             .filter((w): w is WarningAlert => w !== null)
             .sort((a, b) => rank[a.severity] - rank[b.severity] || b.ts - a.ts);
     }, [data.weather_events]);
-    const digestReports = useMemo<DigestReport[]>(() => news.map(n => ({
+    const digestReports = useMemo<(DigestReport & { source_id?: string })[]>(() => {
+        const sourceById = new Map((data.news ?? []).map(raw => {
+            const record = rec(raw);
+            return [str(record.id), str(record.source_id)] as const;
+        }));
+        return news.map(n => ({
         id: n.id,
+        analysis_allowed: n.analysis_allowed,
+        source_id: sourceById.get(n.id) || undefined,
         title: n.title,
         text: n.text.slice(0, 600),
         source: n.source,
         source_name: n.source_name,
         bloc: n.bloc,
+        source_role: n.source_role,
+        source_authority_note: n.source_authority_note,
         published: n.published,
         link: n.link,
         flag: n.flag,
         views: n.views,
-        also_reported_by: n.carriers.map(c => ({ source: c.source, source_name: c.source_name, bloc: c.bloc })),
-    })), [news]);
+        also_reported_by: n.carriers.map(c => ({ source: c.source, source_name: c.source_name, bloc: c.bloc, source_role: c.source_role })),
+    }));
+    }, [news, data.news]);
     const threads = useMemo(() => buildThreads(digestReports, 8), [digestReports]);
     const activeThread = threads.find(t => t.id === threadId) ?? null;
     // Only what the overview reads — not the whole dashboard state.
     const overviewPayload = useMemo(() => ({
         news: digestReports,
+        news_meta: data.news_meta,
         earthquakes: quakes.map(q => ({ magnitude: q.magnitude, place: q.place, time: q.ts, tsunami: q.tsunami ? 1 : 0, url: q.url })),
         weather_events: (data.weather_events ?? []).slice(0, 100).map(w => ({ type: str(rec(w).type), severity: str(rec(w).severity) })),
-    }), [digestReports, quakes, data.weather_events]);
-    const signature = `${news[0]?.id ?? ''}|${news.length}|${quakes[0]?.id ?? ''}`;
+    }), [digestReports, quakes, data.weather_events, data.news_meta]);
+    const sourceHealthSignature = (data.news_meta?.sources ?? []).map(source => `${source.id ?? source.handle}:${source.status ?? 'unknown'}:${source.stale ?? 'unknown'}`).join('|');
+    const signature = `${news[0]?.id ?? ''}|${news.length}|${quakes[0]?.id ?? ''}|${sourceHealthSignature}`;
     const q = query.trim().toLowerCase();
     // A new tab or filter starts at the top, not wherever the last list was scrolled to.
-    useEffect(() => { listRef.current?.scrollTo({ top: 0 }); }, [tab, bloc, threadId, q]);
-    const newsFiltersActive = Boolean(activeThread) || bloc !== 'all' || newsKind !== null;
+    useEffect(() => { listRef.current?.scrollTo({ top: 0 }); }, [tab, role, threadId, q]);
+    const newsFiltersActive = Boolean(activeThread) || role !== 'all' || newsKind !== null;
     const threadIds = useMemo(() => (activeThread ? new Set(activeThread.itemIds) : null), [activeThread]);
     const visibleNews = useMemo(() => news.filter(n => (!threadIds || threadIds.has(n.id))
-        && (bloc === 'all' || n.bloc === bloc || n.carriers.some(c => c.bloc === bloc))
+        && (role === 'all' || n.source_role === role || n.carriers.some(c => c.source_role === role))
         && (newsKind === null || (newsKind === 'rocket' ? n.alertKind === 'rocket' : Boolean(n.flag)))
-        && (!q || n.haystack.includes(q))), [news, threadIds, bloc, newsKind, q]);
+        && (!q || n.haystack.includes(q))), [news, threadIds, role, newsKind, q]);
     const visibleQuakes = useMemo(() => quakes.filter(k => !q || k.place.toLowerCase().includes(q)), [quakes, q]);
     const visibleWarnings = useMemo(() => warnings.filter(w => !q || w.haystack.includes(q)), [warnings, q]);
-    const visibleFeeds = useMemo(() => BUILTIN_FEEDS.filter(f => !q || `${f.name} ${f.city} ${f.country} ${f.category}`.toLowerCase().includes(q)), [q]);
     const list: AlertItem[] = useMemo(() => {
         if (tab === 'news')
             return visibleNews;
@@ -698,6 +751,7 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
     }, [pinnedKey, onPinnedChange]);
     const units = useMemo<Unit[]>(() => groupStatements(list.map(item => ({
         item,
+        analysis_allowed: item.kind !== 'news' || item.analysis_allowed,
         // Only reports form statements; a unique source keeps the rest apart.
         source: item.kind === 'news' ? item.source : `${item.kind}:${item.id}`,
         title: item.kind === 'news' ? item.title : '',
@@ -728,12 +782,12 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
         return out;
     }, [units, now, tab]);
     const sources: SourceHealth[] = data.news_meta?.sources ?? [];
-    const liveSources = sources.filter(s => s.count > 0).length;
+    const liveSources = sources.filter(s => (s.status === 'ok' || s.status === 'empty') && !s.stale).length;
     const fetchedAt: string | null = data.news_meta?.fetchedAt ?? null;
     const breakingCount = news.filter(n => n.flag).length;
     const loading = data.news === undefined;
     const filtersActive = newsFiltersActive || Boolean(q);
-    const clearFilters = useCallback(() => { setQuery(''); setBloc('all'); setThreadId(null); setNewsKind(null); }, []);
+    const clearFilters = useCallback(() => { setQuery(''); setRole('all'); setThreadId(null); setNewsKind(null); }, []);
     /*
      * What a reader would want to know before reading anything: warnings in
      * force, rockets in the air, what a channel has flagged as breaking, and the
@@ -778,23 +832,8 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
         { id: 'news', label: 'NEWS', count: news.length },
         { id: 'warnings', label: 'WARN', count: warnings.length },
         { id: 'quakes', label: 'QUAKE', count: quakes.length },
-        { id: 'feeds', label: 'FEEDS', count: BUILTIN_FEEDS.length },
+        { id: 'feeds', label: 'BROADCASTS', count: 0 },
     ];
-    /* Grouped by where each source is read from, since a channel going quiet
-       and a wire going quiet mean different things. */
-    const sourcesTitle = sources.length
-        ? (['telegram', 'wire'] as const)
-            .map(kind => {
-            const group = sources.filter(s => (s.kind ?? 'telegram') === kind);
-            if (!group.length)
-                return '';
-            const heading = kind === 'telegram' ? 'CHANNELS' : 'WIRES';
-            const lines = group.map(s => `  ${s.name}: ${s.count ? `${s.count} items, latest ${timeAgo(s.latest, now)}` : s.latest ? `quiet — nothing in 72h (last ${timeAgo(s.latest, now)})` : 'unreachable'}`);
-            return `${heading}\n${lines.join('\n')}`;
-        })
-            .filter(Boolean)
-            .join('\n\n')
-        : 'Waiting for the source report';
     /* Rocket and breaking are filters over reports; leaving one set while the
        panel shows warnings would label the list with a filter it is not using. */
     const selectTab = useCallback((id: Tab) => {
@@ -845,21 +884,23 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
           </button>)))}
       </div>
 
-      {/* Search and perspective */}
+      {/* Search and source role */}
       <div className="flex gap-1.5">
         <label className="relative flex-1 min-w-0">
           <span className="sr-only">{__t("Search alerts")}</span>
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#5C5A54]"/>
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder={__tv(tab === 'feeds' ? 'Search feeds…' : 'Search headlines, places, channels…')} className="w-full rounded border border-[#2A2A28] bg-black/30 py-1 pl-6 pr-6 text-[11px] text-[#E8E6E0] placeholder:text-[#5C5A54] outline-none focus:border-[var(--cyan-primary)]/50"/>
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder={__t('Search headlines, places, sources…')} className="w-full rounded border border-[#2A2A28] bg-black/30 py-1 pl-6 pr-6 text-[11px] text-[#E8E6E0] placeholder:text-[#5C5A54] outline-none focus:border-[var(--cyan-primary)]/50"/>
           {__tv(query && (<button onClick={() => setQuery('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#5C5A54] hover:text-white" aria-label={__t("Clear search")}>
               <X className="h-3 w-3"/>
             </button>))}
         </label>
-        {__tv(tab !== 'quakes' && tab !== 'warnings' && tab !== 'feeds' && (<select value={bloc} onChange={e => setBloc(e.target.value as Bloc | 'all')} aria-label={__t("Filter by perspective")} className="w-[108px] flex-shrink-0 rounded border border-[#2A2A28] bg-[#0c0c10] px-1 py-1 text-[10px] font-mono text-[#C9C5BC] outline-none focus:border-[var(--cyan-primary)]/50" style={bloc !== 'all' ? { color: BLOCS[bloc].color, borderColor: `${BLOCS[bloc].color}66` } : undefined}>
-            <option value="all">{__t("All sides")}</option>
-            {__tv(BLOC_ORDER.map(b => <option key={b} value={b}>{__tv(BLOCS[b].label)}</option>))}
+        {__tv(tab !== 'quakes' && tab !== 'warnings' && tab !== 'feeds' && (<select value={role} onChange={e => setRole(e.target.value as SourceRole | 'all')} aria-label={__t("Filter by source role")} className="w-[125px] flex-shrink-0 rounded border border-[#2A2A28] bg-[#0c0c10] px-1 py-1 text-[10px] font-mono text-[#C9C5BC] outline-none focus:border-[var(--cyan-primary)]/50">
+            <option value="all">{__t("All source roles")}</option>
+            {SOURCE_ROLE_ORDER.map(r => <option key={r} value={r}>{__t(SOURCE_ROLES[r].label)}</option>)}
           </select>))}
       </div>
+
+      <SourcePanel sources={sources} excluded={data.news_meta?.excluded_sources ?? []}/>
 
       {/* One-click AI overview of the current alert picture */}
       {__tv(tab !== 'feeds' && tab !== 'warnings' && (<div className={maximized ? '' : 'max-h-[240px] overflow-y-auto styled-scrollbar pr-0.5'}>
@@ -870,7 +911,7 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
       {__tv(tab !== 'quakes' && tab !== 'warnings' && tab !== 'feeds' && threads.length > 0 && !overviewOpen && (<div className={maximized ? 'flex flex-wrap gap-1' : '-mx-3 flex gap-1 overflow-x-auto px-3 pb-0.5 styled-scrollbar'}>
           {__tv(threads.map(t => {
                 const active = t.id === threadId;
-                const dot = t.perspective === 'cross' ? '#00E676' : t.perspective === 'single' ? '#FF9500' : '#5C5A54';
+                const dot = ACCENT;
                 return (<button key={t.id} onClick={() => selectThread(active ? null : t.id)} aria-pressed={active} title={__t("{0} reports from {1} channels{2}", t.count, t.sources.length, t.topics.length ? ` — ${t.topics.join(', ')}` : '')} className={`flex flex-shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[9.5px] font-mono whitespace-nowrap transition-colors ${active ? 'text-white' : 'text-[#9B978E] hover:text-[#E8E6E0] border-[#2A2A28] hover:border-[#3A3A38]'}`} style={active ? { borderColor: `${ACCENT}99`, background: `${ACCENT}22` } : undefined}>
                 <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }}/>
                 {__tv(t.label)}
@@ -880,35 +921,22 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
         </div>))}
 
       {__tv(filtersActive && tab !== 'feeds' && (<div className="flex items-center justify-between rounded border border-white/5 bg-white/[0.02] px-2 py-1 text-[9.5px] font-mono text-[#8A8880]">
-          <span className="truncate">{__t("SHOWING ")}{__tv(list.length)}{__tv(activeThread ? ` · ${activeThread.label.toUpperCase()}` : '')}{__tv(bloc !== 'all' ? ` · ${BLOCS[bloc].short}` : '')}{__tv(newsKind ? ` · ${newsKind.toUpperCase()} ONLY` : '')}
+          <span className="truncate">{__t("SHOWING ")}{__tv(list.length)}{__tv(activeThread ? ` · ${activeThread.label.toUpperCase()}` : '')}{__tv(role !== 'all' ? ` · ${__t(SOURCE_ROLES[role].label)}` : '')}{__tv(newsKind ? ` · ${newsKind.toUpperCase()} ONLY` : '')}
           </span>
           <button onClick={clearFilters} className="flex-shrink-0 text-[var(--cyan-primary)] hover:underline">{__t("CLEAR")}</button>
         </div>))}
     </div>);
-    const listBody = tab === 'feeds' ? (<div className="space-y-3">
-      {__tv(Object.entries(FEED_REGIONS).map(([region, label]) => {
-            const feeds = visibleFeeds.filter(f => f.region === region);
-            if (!feeds.length)
-                return null;
-            return (<section key={region}>
-            <h5 className="mb-1 text-[8.5px] font-mono tracking-widest text-[#5C5A54]">{__tv(label)}</h5>
-            <div className="space-y-1">
-              {__tv(feeds.map(f => (<button key={f.name} type="button" onClick={() => { locate(f.lat, f.lng); onWatchFeed?.(f.url, f.name); }} className="flex w-full items-center gap-2 rounded-md border border-[#26262A] bg-[#111111]/70 px-2.5 py-1.5 text-left transition-colors hover:bg-[#17171B] hover:border-[#34343A]">
-                  <Radio className="h-3 w-3 flex-shrink-0 text-[#FF4081]"/>
-                  <span className="flex-1 min-w-0 truncate text-[11.5px] text-[#E8E6E0]">{__tv(f.name)}</span>
-                  <span className="flex-shrink-0 text-[9px] font-mono uppercase text-[#8A8880]">{__tv(f.city)}, {__tv(f.country)}</span>
-                  <span className="flex-shrink-0 rounded bg-white/5 px-1 text-[8px] font-mono uppercase text-[#5C5A54]">{__tv(f.category)}</span>
-                </button>)))}
-            </div>
-          </section>);
-        }))}
-      {__tv(visibleFeeds.length === 0 && <EmptyState text={__t("No feeds match")} onClear={clearFilters}/>)}
-    </div>) : loading ? (<div className="space-y-2" aria-busy="true">
+    const listBody = tab === 'feeds' ? (<section className="space-y-3 py-3 text-[11px] leading-relaxed text-[#C9C5BC]">
+      <h4 className="font-semibold text-[#E8E6E0]">{__t("No live broadcasts admitted")}</h4>
+      <p>{__t("Channel identity, English-language coverage, availability and embedding rights must be checked before a broadcast appears here.")}</p>
+      <a href="https://webtv.un.org/en" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#CFB87C] underline underline-offset-4"><ExternalLink className="h-3 w-3"/>{__t("Open official UN Web TV")}</a>
+      <p className="text-[10px] text-[#A9A59B]">{__t("Official reference link only; no live stream is embedded or verified here.")}</p>
+    </section>) : loading ? (<div className="space-y-2" aria-busy="true">
       {__tv([0, 1, 2].map(i => (<div key={i} className="h-[74px] animate-pulse rounded-lg border border-[#26262A] bg-[#111111]/60"/>)))}
-      <div className="text-center text-[10px] font-mono text-[#5C5A54]">{__t("READING CHANNELS\u2026")}</div>
+      <div className="text-center text-[10px] font-mono text-[#5C5A54]">{__t("READING SOURCES…")}</div>
     </div>) : list.length === 0 ? (filtersActive
         ? <EmptyState text={__t("No alerts match these filters")} onClear={clearFilters}/>
-        : <EmptyState text={__tv(tab === 'quakes' ? 'No recent earthquakes' : tab === 'warnings' ? 'No warnings in force' : 'No reports — the sources did not answer')} onRetry={onRefresh ? refresh : undefined}/>) : (<div className="space-y-3">
+        : <EmptyState text={__tv(tab === 'quakes' ? 'No earthquake records in this snapshot; this does not establish safe conditions.' : tab === 'warnings' ? 'No warning records in this snapshot; this does not establish safe conditions.' : liveSources === sources.length && sources.length > 0 ? 'No reports in the current feed window. Missing data does not establish safe conditions.' : 'No reports available. Source checks are incomplete or failed; conditions are unknown.')} onRetry={onRefresh ? refresh : undefined}/>) : (<div className="space-y-3">
       {__tv(grouped.map(group => (<section key={group.label}>
           <h5 className={`sticky top-0 z-10 -mx-1 mb-1.5 px-1 py-1 text-[8.5px] font-mono tracking-widest text-[#5C5A54] backdrop-blur-md ${maximized ? 'bg-[#0a0a09]/90' : 'bg-[#08080c]/80'}`}>
             {__tv(group.label)} <span className="opacity-60">· {__tv(group.units.reduce((n, u) => n + (u.kind === 'statement' ? u.items.length : 1), 0))}</span>
@@ -928,7 +956,7 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
           </div>
         </section>)))}
     </div>);
-    const content = (<motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15, duration: 0.4 }} role={maximized ? 'dialog' : undefined} aria-label={__tv(maximized ? 'Live alerts' : undefined)} className={`glass-panel flex flex-col overflow-hidden pointer-events-auto transition-all duration-300 ${maximized ? 'fixed inset-4 z-[9999] bg-[#0a0a09]/95 backdrop-blur-3xl' : 'shrink-0 h-[560px] max-h-[82vh] resize-y'}`}>
+    const content = (<motion.div ref={panelRef} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15, duration: 0.4 }} role={maximized ? 'dialog' : undefined} aria-modal={maximized ? true : undefined} aria-label={__tv(maximized ? 'Live alerts' : undefined)} className={`glass-panel flex flex-col overflow-hidden pointer-events-auto transition-all duration-300 ${maximized ? 'fixed inset-4 z-[9999] bg-[#0a0a09]/95 backdrop-blur-3xl' : 'shrink-0 h-[560px] max-h-[82vh] resize-y'}`}>
       {/* Header: title and controls, then a status line */}
       <div className="flex-shrink-0 border-b border-[rgba(255,255,255,0.05)] bg-[rgba(0,0,0,0.3)]">
         <div className="flex items-center justify-between gap-2 px-3 pt-2 pb-1">
@@ -944,10 +972,10 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
                 <MapPin className="w-3 h-3"/>
                 <span className="text-[9px] font-mono tabular-nums">{__tv(pinned.length)}</span>
               </button>))}
-            {__tv(onRefresh && (<button onClick={refresh} disabled={refreshing} className="p-1 rounded hover:bg-white/10 transition-colors" title={__t("Refresh (channels are re-read every 3 minutes)")} aria-label={__t("Refresh alerts")}>
+            {__tv(onRefresh && (<button onClick={refresh} disabled={refreshing} className="p-1 rounded hover:bg-white/10 transition-colors" title={__t("Refresh source snapshots")} aria-label={__t("Refresh alerts")}>
                 <RefreshCw className={`w-3 h-3 text-[var(--text-muted)] ${refreshing ? 'animate-spin' : ''}`}/>
               </button>))}
-            <button onClick={() => { setMaximized(!maximized); if (!expanded)
+            <button ref={maximizeRef} onClick={() => { setMaximized(!maximized); if (!expanded)
         setExpanded(true); }} className="p-1 rounded hover:bg-white/10 transition-colors" title={__tv(maximized ? 'Restore (Esc)' : 'Maximize')} aria-label={__tv(maximized ? 'Restore panel' : 'Maximize panel')}>
               {__tv(maximized ? <Minimize2 className="w-3 h-3 text-[var(--text-muted)]"/> : <Maximize2 className="w-3 h-3 text-[var(--text-muted)]"/>)}
             </button>
@@ -956,19 +984,19 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed, onRefresh, pin
             </button>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 px-3 pb-1.5 text-[9px] font-mono tracking-wider text-[#5C5A54] whitespace-nowrap overflow-hidden">
-          {__tv(sources.length > 0 ? (<span title={__tv(sourcesTitle)} className="flex items-center gap-1 cursor-help" style={{ color: liveSources === sources.length ? '#00E676' : '#FF9500' }}>
+        <div className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5 text-[9px] font-mono tracking-wider text-[#A9A59B]">
+          {__tv(sources.length > 0 ? (<span title={__t("Source checks are independent of the number of reports.")} className="flex items-center gap-1 cursor-help" style={{ color: liveSources === sources.length ? '#00E676' : '#FF9500' }}>
               <span className="h-1.5 w-1.5 rounded-full animate-osiris-pulse" style={{ background: 'currentColor' }}/>
-              {__tv(liveSources)}/{__tv(sources.length)}{__t(" SOURCES LIVE")}</span>) : (<span>{__t("CONNECTING\u2026")}</span>))}
-          {__tv(fetchedAt && <span title={__t("Feed fetched {0}", new Date(fetchedAt).toLocaleString())}>{__t("\u00B7 UPDATED ")}{__tv(timeAgo(fetchedAt, now).toUpperCase())}</span>)}
+              {__tv(liveSources)}/{__tv(sources.length)}{__t(" SOURCES CHECKED")}</span>) : (<span>{__t("SOURCE STATUS UNKNOWN")}</span>))}
+          {__tv(fetchedAt && <span title={__t("Feed fetched {0}", new Date(fetchedAt).toISOString())}>{__t(" · SNAPSHOT ")}{__tv(timeAgo(fetchedAt, now))}</span>)}
           {__tv(breakingCount > 0 && <span className="text-[#FF6B6B]">· {__tv(breakingCount)}{__t(" BREAKING")}</span>)}
         </div>
       </div>
 
       <AnimatePresence initial={false}>
-        {__tv(expanded && (<motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className={`flex flex-1 min-h-0 ${maximized ? 'flex-row bg-[#0a0a09]' : 'flex-col bg-transparent'}`}>
+        {__tv(expanded && (<motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className={`flex flex-1 min-h-0 ${maximized ? 'flex-col md:flex-row bg-[#0a0a09]' : 'flex-col bg-transparent'}`}>
             {__tv(maximized ? (<>
-                <aside className="w-[380px] flex-shrink-0 overflow-y-auto styled-scrollbar border-r border-[#2A2A28] bg-[#0e0e0d] p-4">
+                <aside className="w-full md:w-[380px] max-h-[45%] md:max-h-none flex-shrink-0 overflow-y-auto styled-scrollbar border-r border-[#2A2A28] bg-[#0e0e0d] p-4">
                   {__tv(controls)}
                 </aside>
                 <div ref={listRef} className="flex-1 min-w-0 overflow-y-auto styled-scrollbar px-6 pt-2 pb-6">{__tv(listBody)}</div>

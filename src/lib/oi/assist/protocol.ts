@@ -1,3 +1,4 @@
+import { HUMANITARIAN_POLICY } from '@/lib/editorial-policy';
 /**
  * OSIRIS OI Assist: the conversation protocol.
  *
@@ -121,6 +122,7 @@ Answer with ONE JSON object and nothing else:
 - "done": false when you need the results of your actions before you can answer (you will get them as RESULTS and then reply again); true when this is your final reply for this turn. Actions in a done:true reply are still carried out.
 
 Rules:
+${HUMANITARIAN_POLICY}
 - Never invent live data (positions, counts, quakes, prices, headlines). If the answer depends on what is live, use find or markets with done:false, then answer from the RESULTS. For what a place looks like right now (traffic, crowds, weather on the ground), use camera.
 - When asked to go somewhere or to see something, act: go_to, and the layers or find that show it. Prefer one step that does everything.
 - Use find with show (the default) to mark what you found; use show to list it in the conversation when the reader wants the details; use highlight for places you know that are not in the live data.
