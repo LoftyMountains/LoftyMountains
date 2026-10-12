@@ -1,5 +1,7 @@
 /** Chinese interface copy; original feed content is kept in its source language. */
 export default {
+  "Hosting analytics": "托管服务统计",
+  "The app adds no advertising networks or tracking cookies. Hosting providers may collect request and performance analytics; this site currently loads Cloudflare Web Analytics.": "应用本身不添加广告网络或追踪 Cookie。托管服务商可能收集请求和性能统计；此网站目前加载 Cloudflare Web Analytics。",
   "Endpoints": "接口",
   "Live feeds": "实时数据源",
   "Keys required": "所需密钥",

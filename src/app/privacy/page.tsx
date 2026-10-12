@@ -94,7 +94,7 @@ const PROMISES: {
     body: string;
 }[] = [
     { icon: <UserX className="h-4 w-4"/>, title: 'No account, ever', body: 'There is nothing to sign up for and nothing to log in to. We do not know who you are, and we have not asked.' },
-    { icon: <EyeOff className="h-4 w-4"/>, title: 'No tracking', body: 'No analytics, no advertising networks, no tracking cookies. We do not build a profile of you or of what you do here.' },
+    { icon: <EyeOff className="h-4 w-4"/>, title: 'Hosting analytics', body: 'The app adds no advertising networks or tracking cookies. Hosting providers may collect request and performance analytics; this site currently loads Cloudflare Web Analytics.' },
     { icon: <HardDrive className="h-4 w-4"/>, title: 'Your things stay with you', body: 'Your settings, history and keys are kept in your own browser, where you can see them and clear them. Not on our servers.' },
     { icon: <KeyRound className="h-4 w-4"/>, title: 'Your AI key is yours', body: 'Used only for the request you make, passed straight to the provider you chose, and never stored on our servers or written to a log.' },
 ];
