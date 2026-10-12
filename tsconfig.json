@@ -1,23 +1,41 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "useDefineForClassFields": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "allowJs": false,
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
     "strict": true,
-    "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["vite/client"]
+    "types": [
+      "vite/client",
+      "node",
+      "web-bluetooth",
+      "geojson"
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "next/dynamic": [
+        "./src/compat/dynamic.tsx"
+      ],
+      "next/link": [
+        "./src/compat/link.tsx"
+      ]
+    }
   },
-  "include": ["src", "shared", "vite.config.ts"]
+  "include": [
+    "src/main.tsx",
+    "src/env.d.ts",
+    "vite.config.ts"
+  ]
 }

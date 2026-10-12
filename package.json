@@ -8,28 +8,33 @@
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vite build && npm run check:bundle",
-    "check:bundle": "node scripts/check-bundle-size.mjs dist",
+    "build": "vite build && node scripts/prepare-pages.mjs && npm run check:bundle",
     "typecheck": "tsc --noEmit",
     "prebuild": "node scripts/prepare-map-worker.mjs",
-    "predev": "node scripts/prepare-map-worker.mjs"
+    "predev": "node scripts/prepare-map-worker.mjs",
+    "test": "vitest run",
+    "check:bundle": "node scripts/check-bundle-size.mjs dist"
   },
   "dependencies": {
-    "d3": "^7.9.0",
-    "d3-cloud": "^1.2.9",
-    "lucide-react": "^0.539.0",
-    "maplibre-gl": "5.20.2",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "framer-motion": "^12.38.0",
+    "hls.js": "^1.6.16",
+    "lightweight-charts": "^5.2.0",
+    "lucide-react": "^1.14.0",
+    "maplibre-gl": "6.7.0",
+    "onnxruntime-web": "1.30.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
   },
   "devDependencies": {
-    "@types/d3": "^7.4.3",
-    "@types/d3-cloud": "^1.2.9",
     "@types/node": "^22.17.1",
-    "@types/react": "^18.3.23",
-    "@types/react-dom": "^18.3.7",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4.7.0",
     "typescript": "^5.9.2",
-    "vite": "^6.1.0"
+    "vite": "^6.1.0",
+    "@tailwindcss/postcss": "^4",
+    "tailwindcss": "^4",
+    "@types/web-bluetooth": "^0.0.21",
+    "vitest": "^2.1.9"
   }
 }

@@ -2,7 +2,7 @@
 
 ## OSIRIS
 
-This economic intelligence console follows the map/layer/feed interaction model of [OSIRIS](https://github.com/simplifaisoul/osiris). The chart-based global market adapter is adapted from its markets API. Other application code is independently implemented for Jingxing’s separate Express server and React client.
+The current application directly reuses the interface, components, styles, assets, API routes and libraries of [OSIRIS](https://github.com/simplifaisoul/osiris), revision `0c43ace696c1afffc47aee81ad4f682fa09f5a3d`. Jingxing adds Chinese/English interface selection and separates the Vite client from the Next API server. The original MIT license is also distributed in `client/OSIRIS-LICENSE`, `client/public/osiris-license.txt` and `server/osiris/LICENSE`.
 
 MIT License
 
@@ -26,10 +26,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## Natural Earth
+## Current upstream data and dependencies
 
-The local world boundary dataset is from Natural Earth (public domain), with properties reduced and geometry retained. Source and terms are recorded in `client/public/data/README.txt`.
+Upstream source attribution, original article links and map credits remain in the copied application. External data, map tiles, imagery, video and news are subject to their respective providers' terms; the code license does not grant ownership or access to those products. Optional credentials and upstream availability continue to govern access. Browser-rendered satellite positions are orbital predictions, not direct telemetry.
 
-## MapLibre GL JS
-
-MapLibre GL JS is distributed under BSD-3-Clause. Package license is included by the production bundle.
+MapLibre GL JS is distributed under BSD-3-Clause and satellite.js under MIT. Their dependency license notices are retained. Other bundled dependencies retain their package license notices.

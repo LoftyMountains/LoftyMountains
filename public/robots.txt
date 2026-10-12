@@ -1,0 +1,17 @@
+# Jingxing — powered by OSIRIS
+# https://www.loftymountains.com
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /api/scanner
+Disallow: /api/osint/*
+
+# Allow search engines to index the main page
+Allow: /api/health
+
+# Sitemap
+Sitemap: https://www.loftymountains.com/sitemap.xml
+
+# Crawl-delay for respectful indexing
+Crawl-delay: 10

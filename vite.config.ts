@@ -1,29 +1,15 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-
-const configuredBasePath = process.env.VITE_BASE_PATH || "/";
-const developmentApiTarget = process.env.VITE_DEV_API_TARGET || "http://127.0.0.1:8787";
+import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig({
-  base: configuredBasePath.endsWith("/") ? configuredBasePath : `${configuredBasePath}/`,
   plugins: [react()],
-  server: {
-    port: 5173,
-    proxy: { "/api": developmentApiTarget },
-  },
-  build: {
-    outDir: "dist",
-    emptyOutDir: true,
-    sourcemap: true,
-    target: "es2020",
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes("maplibre-gl")) return "map-engine";
-          if (id.includes("lucide-react")) return "icons";
-          if (id.includes("react") || id.includes("scheduler")) return "react-vendor";
-        },
-      },
-    },
-  },
+  resolve: { alias: {
+    "@": fileURLToPath(new URL("./src", import.meta.url)),
+    "next/dynamic": fileURLToPath(new URL("./src/compat/dynamic.tsx", import.meta.url)),
+    "next/link": fileURLToPath(new URL("./src/compat/link.tsx", import.meta.url)),
+  } },
+  server: { host: "0.0.0.0", port: 5173, proxy: { "/api": process.env.VITE_DEV_API_TARGET || "http://[::1]:8787" } },
+  worker: { format: "es" },
+  build: { outDir: "dist", emptyOutDir: true, target: "es2022", sourcemap: false },
 });

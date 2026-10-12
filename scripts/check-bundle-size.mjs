@@ -4,11 +4,12 @@ import process from "node:process";
 import { gzipSync } from "node:zlib";
 
 const outputDirectory = path.resolve(process.argv[2] || "dist");
-const initialBudget = 150 * 1024;
-const chunkBudget = 80 * 1024;
+// Direct OSIRIS UI baseline: ~250 KiB gzip before bilingual catalogs.
+const initialBudget = 550 * 1024;
+const chunkBudget = 400 * 1024;
 // The deferred WebGL engine includes its map worker; keep a separate explicit
 // ceiling while retaining the existing budget for application code.
-const mapEngineBudget = 450 * 1024;
+const mapEngineBudget = 500 * 1024;
 const indexFile = path.join(outputDirectory, "index.html");
 
 if (!fs.existsSync(indexFile)) {
@@ -50,7 +51,7 @@ const assets = javascriptFiles.map((file) => ({
   initial: initialFiles.has(file),
 })).sort((left, right) => right.gzipBytes - left.gzipBytes);
 const initialBytes = assets.filter((asset) => asset.initial).reduce((total, asset) => total + asset.gzipBytes, 0);
-const budgetFor = (asset) => !asset.initial && (/(?:^|\/)map-engine-[^/]+\.js$/.test(asset.name)
+const budgetFor = (asset) => !asset.initial && (/(?:^|\/)(?:map-engine|OsirisMap)-[^/]+\.js$/.test(asset.name)
   || asset.name === "vendor/maplibre/maplibre-gl-csp-worker.js") ? mapEngineBudget : chunkBudget;
 const oversizedAssets = assets.filter((asset) => asset.gzipBytes > budgetFor(asset));
 

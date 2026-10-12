@@ -1,0 +1,1366 @@
+import { apiUrl } from '@/lib/api-url';
+import { t as __t, translateValue as __tv, useLocale as __useLocale } from '@/i18n';
+'use client';
+import { useState, useCallback, useEffect, memo } from 'react';
+import { createPortal } from 'react-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import { LocateFixed, Search, Radar, Globe, Shield, FileText, Radio, ChevronDown, ChevronUp, Loader2, AlertTriangle, Server, Wifi, Lock, MapPin, Bug, Code, Layers, Network, Fingerprint, CheckCircle, XCircle, Clock, ExternalLink, Crosshair, Maximize2, Minimize2, Gavel, Bitcoin, Phone, Terminal, ShieldAlert, User } from 'lucide-react';
+import { ipToNumber, numberToIp, calculateSubnetStart, classifyDevice, assessRisk, batchFetch, ShodanInternetDBResponse, SweepDevice } from '@/lib/osint-utils';
+import ChainBrief from '@/components/ChainBrief';
+import FingerprintSearch, { useFingerprintSearch } from '@/components/FingerprintSearch';
+import DonBotScan from '@/components/DonBotScan';
+import DigitalDonMark from '@/components/DigitalDonMark';
+/**
+ * Tool groups. At 19 modules a flat grid forces 8px truncated labels
+ * ("SUBDOMA…", "PHONE I…"); grouping keeps every label readable and makes
+ * the toolkit scannable by what you are investigating.
+ */
+const GROUPS = [
+    { id: 'network', label: 'NETWORK & HOST', hint: 'IPs, ports, routing, hardware' },
+    { id: 'domain', label: 'DOMAIN & WEB', hint: 'DNS, certificates, site fingerprinting' },
+    { id: 'identity', label: 'IDENTITY', hint: 'People, handles, accounts' },
+    { id: 'threat', label: 'THREAT & EXPOSURE', hint: 'Reputation and breach data' },
+    { id: 'chain', label: 'BLOCKCHAIN', hint: 'Wallets, tokens and on-chain incidents' },
+] as const;
+type GroupId = (typeof GROUPS)[number]['id'];
+interface ToolDef {
+    id: string;
+    label: string;
+    icon: any;
+    placeholder: string;
+    color: string;
+    group: GroupId;
+    /** Shown under the label in the expanded view. */
+    blurb: string;
+}
+const TABS: ToolDef[] = [
+    { id: 'scanner', label: 'PORT SCAN', icon: Radar, placeholder: 'IP or hostname', color: '#00E5FF', group: 'network', blurb: 'Open ports and running services' },
+    { id: 'vuln', label: 'VULN SWEEP', icon: Bug, placeholder: 'IP or hostname', color: '#FF3D3D', group: 'network', blurb: 'Known CVEs affecting the host' },
+    { id: 'shodan', label: 'SHODAN IOT', icon: Network, placeholder: 'IP address', color: '#FF3D3D', group: 'network', blurb: 'Internet-exposed device record' },
+    { id: 'bgp', label: 'BGP ROUTE', icon: Globe, placeholder: 'IP or ASN', color: '#00E5FF', group: 'network', blurb: 'Autonomous system and prefixes' },
+    { id: 'mac', label: 'MAC ADDR', icon: Fingerprint, placeholder: 'MAC address', color: '#FFD700', group: 'network', blurb: 'Hardware vendor lookup' },
+    { id: 'sweep', label: 'IP SWEEP', icon: Crosshair, placeholder: 'Enter IP address (e.g. 8.8.8.8)', color: '#FF3D3D', group: 'network', blurb: 'Scan an entire subnet' },
+    { id: 'dns', label: 'DNS', icon: Server, placeholder: 'Domain name', color: '#448AFF', group: 'domain', blurb: 'All record types' },
+    { id: 'whois', label: 'WHOIS', icon: FileText, placeholder: 'Domain name', color: '#FFD700', group: 'domain', blurb: 'Registrar and ownership' },
+    { id: 'certs', label: 'CERTS', icon: Lock, placeholder: 'Domain name', color: '#E040FB', group: 'domain', blurb: 'Certificate transparency log' },
+    { id: 'ssl', label: 'SSL/TLS', icon: Shield, placeholder: 'Domain name', color: '#76FF03', group: 'domain', blurb: 'Cipher and certificate health' },
+    { id: 'subdomains', label: 'SUBDOMAINS', icon: Layers, placeholder: 'Domain to enumerate', color: '#00BCD4', group: 'domain', blurb: 'Enumerate attack surface' },
+    { id: 'headers', label: 'HEADERS', icon: Code, placeholder: 'URL to inspect', color: '#87CEEB', group: 'domain', blurb: 'Security headers audit' },
+    { id: 'tech', label: 'TECH DETECT', icon: Code, placeholder: 'URL to fingerprint', color: '#9C27B0', group: 'domain', blurb: 'Frameworks and stack' },
+    { id: 'username', label: 'USERNAME', icon: User, placeholder: 'Username / handle to hunt', color: '#00E676', group: 'identity', blurb: 'Hunt a handle across platforms' },
+    { id: 'github', label: 'GITHUB RECON', icon: Terminal, placeholder: 'GitHub username', color: '#87CEEB', group: 'identity', blurb: 'Profile, repos and contacts' },
+    { id: 'phone', label: 'PHONE INTEL', icon: Phone, placeholder: 'Phone number (e.g. +1...)', color: '#FF9500', group: 'identity', blurb: 'Carrier, region and line type' },
+    { id: 'fingerprint', label: 'FINGERPRINT', icon: Fingerprint, placeholder: 'Username, email or phone', color: '#3B82F6', group: 'identity', blurb: 'Public profile search, streamed live' },
+    { id: 'threats', label: 'THREATS', icon: AlertTriangle, placeholder: 'IP, domain, or hash', color: '#FF9500', group: 'threat', blurb: 'Reputation across feeds' },
+    { id: 'leaks', label: 'DATA LEAKS', icon: ShieldAlert, placeholder: 'Email address', color: '#E040FB', group: 'threat', blurb: 'Breach exposure for an address' },
+    { id: 'crypto', label: 'CHAIN INTEL', icon: Bitcoin, placeholder: 'BTC, ETH or SOL wallet address', color: '#F7931A', group: 'chain', blurb: 'Wallet forensics and daily brief' },
+    // DigitalDon's own mark, kept monochrome by their brand rule.
+    { id: 'donbot', label: 'DONBOT', icon: DigitalDonMark, placeholder: 'Ticker, name or contract address', color: '#E8E6E0', group: 'chain', blurb: 'Token signal and holder clusters' },
+];
+interface OsintPanelProps {
+    isOpen?: boolean;
+    onClose?: () => void;
+    isMobile?: boolean;
+    onSweepVisualize?: (data: any) => void;
+    onScanGeolocate?: (target: string, data: any) => void;
+}
+function OsintPanelInner({ isMobile, onSweepVisualize, onScanGeolocate }: OsintPanelProps) {
+    __useLocale();
+    const [activeTab, setActiveTab] = useState('scanner');
+    const [isFullScreen, setIsFullScreen] = useState(false);
+    const [query, setQuery] = useState('');
+    const [results, setResults] = useState<any>(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    const [scanType, setScanType] = useState('quick');
+    const [expanded, setExpanded] = useState(true);
+    const [history, setHistory] = useState<{
+        tab: string;
+        query: string;
+        time: string;
+    }[]>([]);
+    const [sweepResult, setSweepResult] = useState<any>(null);
+    const [sweepProgress, setSweepProgress] = useState<{
+        current: number;
+        total: number;
+    } | null>(null);
+    const [sweepCidr, setSweepCidr] = useState(24);
+    const [cveCache, setCveCache] = useState<Record<string, any>>({});
+    // CHAIN INTEL carries two views: the daily brief needs no target, the wallet
+    // lookup uses the shared query bar.
+    const [chainView, setChainView] = useState<'brief' | 'wallet'>('brief');
+    /** Free-text filter over the toolkit — 19 modules is too many to scan. */
+    const [toolFilter, setToolFilter] = useState('');
+    // Owned here, not by the view: toggling the expanded view remounts it.
+    const fingerprint = useFingerprintSearch();
+    /** DonBot's open token, kept for the same reason; its frame reloads on the remount, on the same token. */
+    const [donbotQuery, setDonbotQuery] = useState<string | null>(null);
+    const selectTool = useCallback((id: string) => {
+        setActiveTab(id);
+        setQuery('');
+        setResults(null);
+        setError('');
+        setSweepResult(null);
+    }, []);
+    // Escape leaves the expanded view — it covers the map, so there must be a
+    // way out that isn't hunting for the button.
+    useEffect(() => {
+        if (!isFullScreen)
+            return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape')
+            setIsFullScreen(false); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [isFullScreen]);
+    const matchesFilter = useCallback((t: ToolDef) => {
+        const q = toolFilter.trim().toLowerCase();
+        if (!q)
+            return true;
+        return (t.label.toLowerCase().includes(q) ||
+            t.blurb.toLowerCase().includes(q) ||
+            t.id.toLowerCase().includes(q));
+    }, [toolFilter]);
+    const [expandedDevice, setExpandedDevice] = useState<string | null>(null);
+    // Fetch CVE details when a device is expanded in full-screen mode
+    const fetchCveDetails = useCallback(async (cveIds: string[]) => {
+        const missing = cveIds.filter(id => !cveCache[id]);
+        if (missing.length === 0)
+            return;
+        // Mark as loading
+        setCveCache(prev => {
+            const next = { ...prev };
+            for (const id of missing)
+                next[id] = { loading: true };
+            return next;
+        });
+        // Fetch in parallel
+        const results = await Promise.allSettled(missing.map(id => fetch(apiUrl(`/api/osint/cve?cve=${encodeURIComponent(id)}`)).then(r => r.json()).then(data => ({ id, data }))));
+        setCveCache(prev => {
+            const next = { ...prev };
+            for (const r of results) {
+                if (r.status === 'fulfilled') {
+                    next[r.value.id] = r.value.data;
+                }
+            }
+            return next;
+        });
+    }, [cveCache]);
+    const handleSelfTrack = () => {
+        setLoading(true);
+        setError('');
+        fetch(apiUrl('/api/geo'))
+            .then(r => {
+            if (!r.ok)
+                throw new Error(`Server returned ${r.status}`);
+            return r.json();
+        })
+            .then(geo => {
+            setLoading(false);
+            if (geo.status === 'success' && geo.lat && geo.lon && onScanGeolocate) {
+                onScanGeolocate(geo.query || 'local', {
+                    lat: geo.lat,
+                    lng: geo.lon,
+                    city: geo.city || 'Unknown',
+                    country: geo.country || 'Unknown',
+                    isp: geo.isp || 'Unknown',
+                    org: geo.org || 'Unknown',
+                    as: geo.as || 'Unknown',
+                    type: 'self_track'
+                });
+            }
+            else {
+                setError("Could not retrieve your IP location.");
+            }
+        })
+            .catch(err => {
+            setLoading(false);
+            setError("Network error: " + err.message);
+        });
+    };
+    const runLookup = useCallback(async () => {
+        if (!query.trim() || loading)
+            return;
+        setLoading(true);
+        setError('');
+        setResults(null);
+        // IP Sweep — separate flow (only for the sweep tab)
+        if (activeTab === 'sweep') {
+            setSweepResult(null);
+            const cidr = sweepCidr;
+            const totalHosts = Math.pow(2, 32 - cidr);
+            setSweepProgress({ current: 0, total: totalHosts });
+            try {
+                const t0 = Date.now();
+                const res = await fetch(apiUrl(`/api/osint/sweep?ip=${encodeURIComponent(query)}&cidr=${cidr}`));
+                if (!res.ok) {
+                    const e = await res.json().catch(() => ({}));
+                    throw new Error(e.error || `Sweep failed (${res.status})`);
+                }
+                const initData = await res.json();
+                const ipParts = initData.target_ip.split('.').map(Number) as [
+                    number,
+                    number,
+                    number,
+                    number
+                ];
+                const ipNum = ipToNumber(ipParts);
+                const subnetStart = calculateSubnetStart(ipNum, cidr);
+                const subnet = numberToIp(subnetStart);
+                const urls: string[] = [];
+                for (let i = 0; i < totalHosts; i++) {
+                    urls.push(`https://internetdb.shodan.io/${numberToIp((subnetStart + i) >>> 0)}`);
+                }
+                const shodanResults = await batchFetch<ShodanInternetDBResponse>(urls, 15, async (u) => {
+                    try {
+                        const r = await fetch(u, { cache: 'no-store' });
+                        if (r.status === 404)
+                            return null;
+                        if (!r.ok)
+                            return null;
+                        return await r.json();
+                    }
+                    catch {
+                        return null;
+                    }
+                }, (done) => setSweepProgress({ current: done, total: totalHosts }));
+                const devices: SweepDevice[] = [];
+                const deviceBreakdown: Record<string, number> = {};
+                for (const sr of shodanResults) {
+                    if (!sr)
+                        continue;
+                    const classification = classifyDevice(sr.ports, sr.cpes, sr.tags);
+                    const risk = assessRisk({ ports: sr.ports, vulns: sr.vulns });
+                    devices.push({
+                        ip: sr.ip, ports: sr.ports, hostnames: sr.hostnames,
+                        cpes: sr.cpes, vulns: sr.vulns, tags: sr.tags,
+                        device_type: classification.device_type,
+                        device_icon: classification.device_icon,
+                        device_color: classification.device_color,
+                        risk_level: risk
+                    });
+                    deviceBreakdown[classification.device_type] = (deviceBreakdown[classification.device_type] || 0) + 1;
+                }
+                setSweepResult({
+                    center: initData.center,
+                    subnet: `${subnet}/${cidr}`,
+                    cidr,
+                    target_ip: initData.target_ip,
+                    devices,
+                    summary: { total_hosts: totalHosts, total_responsive: devices.length, device_breakdown: deviceBreakdown },
+                    sweep_time_ms: Date.now() - t0
+                });
+                setSweepProgress(null);
+                setHistory(prev => [{ tab: activeTab, query, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 9)]);
+            }
+            catch (err: any) {
+                setError(err.message);
+                setSweepProgress(null);
+            }
+            finally {
+                setLoading(false);
+            }
+            return;
+        }
+        try {
+            let url = '';
+            switch (activeTab) {
+                case 'dns':
+                    url = apiUrl(`/api/osint/dns?domain=${encodeURIComponent(query)}`);
+                    break;
+                case 'certs':
+                    url = apiUrl(`/api/osint/certs?domain=${encodeURIComponent(query)}`);
+                    break;
+                case 'whois':
+                    url = apiUrl(`/api/osint/whois?domain=${encodeURIComponent(query)}`);
+                    break;
+                case 'threats':
+                    url = apiUrl(`/api/osint/threats?query=${encodeURIComponent(query)}`);
+                    break;
+                case 'bgp':
+                    url = apiUrl(`/api/osint/bgp?query=${encodeURIComponent(query)}`);
+                    break;
+                case 'mac':
+                    url = apiUrl(`/api/osint/mac?mac=${encodeURIComponent(query)}`);
+                    break;
+                case 'phone':
+                    url = apiUrl(`/api/osint/phone?number=${encodeURIComponent(query)}`);
+                    break;
+                case 'leaks':
+                    url = `https://api.xposedornot.com/v1/breach-analytics?email=${encodeURIComponent(query)}`;
+                    break;
+                case 'crypto':
+                    url = apiUrl(`/api/osint/crypto?address=${encodeURIComponent(query)}`);
+                    break;
+                case 'username':
+                    url = apiUrl(`/api/osint/username?username=${encodeURIComponent(query)}`);
+                    break;
+                case 'github':
+                    url = apiUrl(`/api/osint/github?user=${encodeURIComponent(query)}`);
+                    break;
+                case 'vuln':
+                    url = apiUrl(`/api/scanner?target=${encodeURIComponent(query)}&type=vuln`);
+                    break;
+                case 'scanner':
+                    url = apiUrl(`/api/scanner?target=${encodeURIComponent(query)}&type=${scanType}`);
+                    break;
+                case 'headers':
+                    url = apiUrl(`/api/scanner?target=${encodeURIComponent(query)}&type=headers`);
+                    break;
+                case 'ssl':
+                    url = apiUrl(`/api/scanner?target=${encodeURIComponent(query)}&type=ssl`);
+                    break;
+                case 'subdomains':
+                    url = apiUrl(`/api/scanner?target=${encodeURIComponent(query)}&type=subdomains`);
+                    break;
+                case 'tech':
+                    url = apiUrl(`/api/scanner?target=${encodeURIComponent(query)}&type=tech`);
+                    break;
+                case 'shodan':
+                    url = `https://internetdb.shodan.io/${encodeURIComponent(query)}`;
+                    break;
+            }
+            const res = await fetch(url, activeTab === 'shodan' ? { cache: 'no-store' } : undefined);
+            if (activeTab === 'shodan' && res.status === 404) {
+                setResults({ ip: query, status: 'No Shodan InternetDB records found', ports: [], cpes: [], hostnames: [], tags: [], vulns: [] });
+                setLoading(false);
+                return;
+            }
+            if (activeTab === 'leaks' && res.status === 404) {
+                setResults({ email: query, breached: false, breaches: [], data_exposed: [] });
+                setHistory(prev => [{ tab: activeTab, query, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 9)]);
+                setLoading(false);
+                return;
+            }
+            const data = await res.json();
+            if (res.ok) {
+                let parsedData = data;
+                if (activeTab === 'leaks') {
+                    let breachList: string[] = [];
+                    const dataExposed = new Set<string>();
+                    if (data.BreachesSummary && data.BreachesSummary.site) {
+                        breachList = data.BreachesSummary.site.split(';').filter(Boolean);
+                    }
+                    if (data.ExposedData && Array.isArray(data.ExposedData)) {
+                        data.ExposedData.forEach((item: any) => {
+                            if (item.data_classes && Array.isArray(item.data_classes)) {
+                                item.data_classes.forEach((dc: string) => dataExposed.add(dc));
+                            }
+                        });
+                    }
+                    parsedData = {
+                        email: query,
+                        breached: breachList.length > 0,
+                        breaches: breachList,
+                        data_exposed: Array.from(dataExposed).sort()
+                    };
+                }
+                setResults(parsedData);
+                setHistory(prev => [{ tab: activeTab, query, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 9)]);
+                // Geolocate the target in the background
+                if (activeTab === 'phone') {
+                    if (data.lat && data.lng && onScanGeolocate) {
+                        onScanGeolocate(query, { lat: data.lat, lng: data.lng, type: 'phone', region: data.region });
+                    }
+                }
+                else if (activeTab !== 'sweep' && activeTab !== 'vuln' && activeTab !== 'crypto' && activeTab !== 'username' && activeTab !== 'mac' && activeTab !== 'bgp' && activeTab !== 'github' && activeTab !== 'leaks' && activeTab !== 'phone') {
+                    fetch(apiUrl(`/api/osint/ip?ip=${encodeURIComponent(query)}`))
+                        .then(r => r.json())
+                        .then(locData => {
+                        if (locData && locData.geo && locData.geo.lat && locData.geo.lon && onScanGeolocate) {
+                            // ip-api returns lat/lon, we pass it up
+                            onScanGeolocate(query, { lat: locData.geo.lat, lng: locData.geo.lon, ...locData, type: activeTab });
+                        }
+                    })
+                        .catch(() => { });
+                }
+            }
+            else {
+                setError(data.error || 'Lookup failed');
+            }
+        }
+        catch {
+            setError('Network error');
+        }
+        finally {
+            setLoading(false);
+        }
+    }, [query, activeTab, scanType, loading, sweepCidr]);
+    const currentTab = TABS.find(t => t.id === activeTab);
+    // ── Shodan-style structured result renderers ──
+    const ResultRow = ({ label, value, color, mono = true }: {
+        label: string;
+        value: any;
+        color?: string;
+        mono?: boolean;
+    }) => {
+        __useLocale();
+        if (value === undefined || value === null || value === '')
+            return null;
+        return (<div className="flex items-start gap-3 py-1.5 border-b border-[var(--border-secondary)]/20 last:border-0">
+        <span className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider w-[90px] flex-shrink-0 pt-0.5">{__tv(label)}</span>
+        <span className={`text-[11px] ${mono ? 'font-mono' : ''} break-all flex-1`} style={{ color: color || 'var(--text-primary)' }}>
+          {__tv(String(value))}
+        </span>
+      </div>);
+    };
+    const StatusBadge = ({ ok, label }: {
+        ok: boolean;
+        label: string;
+    }) => {
+        __useLocale();
+        return (<span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold ${ok ? 'bg-green-500/15 text-green-400 border border-green-500/30' : 'bg-red-500/15 text-red-400 border border-red-500/30'}`}>
+      {__tv(ok ? <CheckCircle className="w-2.5 h-2.5"/> : <XCircle className="w-2.5 h-2.5"/>)}
+      {__tv(label)}
+    </span>);
+    };
+    // Surfaces an inline OFAC-SDN hit (used by the WHOIS and IP-intel routes
+    // when their cross-check finds a sanctioned registrant / ASN owner).
+    const SanctionsBadge = ({ match }: {
+        match: any;
+    }) => {
+        __useLocale();
+        if (!match || !Array.isArray(match.hits) || match.hits.length === 0)
+            return null;
+        return (<div className="mb-2 px-2 py-2 rounded border border-red-500/40 bg-red-500/15">
+        <div className="flex items-center gap-2 mb-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 text-red-400"/>
+          <span className="text-[11px] font-mono font-bold text-red-400 tracking-wider">{__t("SANCTIONED \u2014 ")}{__tv(match.source || 'OFAC SDN')}
+          </span>
+        </div>
+        {__tv(match.hits.slice(0, 5).map((h: any, i: number) => (<div key={i} className="text-[10px] font-mono text-red-200 break-all leading-tight">
+            <span className="text-[var(--text-muted)]">↳ {__tv(h.matched_value)}:</span>{__t(" ")}
+            {__tv((h.entries || []).slice(0, 2).map((e: any) => e.name).join('; '))}
+          </div>)))}
+      </div>);
+    };
+    const SectionHeader = ({ title, icon: Icon, color }: {
+        title: string;
+        icon: any;
+        color: string;
+    }) => {
+        __useLocale();
+        return (<div className="flex items-center gap-2 mt-3 mb-1.5 first:mt-0">
+      <Icon className="w-3.5 h-3.5" style={{ color }}/>
+      <span className="text-[11px] font-mono font-bold tracking-widest" style={{ color }}>{__tv(title)}</span>
+      <div className="flex-1 h-px" style={{ background: `${color}30` }}/>
+    </div>);
+    };
+    const PortRow = ({ port, state, service, version }: {
+        port: number;
+        state: string;
+        service?: string;
+        version?: string;
+    }) => {
+        __useLocale();
+        return (<div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-[var(--hover-accent)] transition-colors">
+      <span className="text-[10px] font-mono font-bold text-[var(--cyan-primary)] w-[60px]">{__tv(port)}</span>
+      <StatusBadge ok={state === 'open'} label={__tv(state.toUpperCase())}/>
+      <span className="text-[11px] font-mono text-[var(--text-secondary)] flex-1">{__tv(service || 'unknown')}</span>
+      {__tv(version && <span className="text-[10px] font-mono text-[var(--text-muted)]">{__tv(version)}</span>)}
+    </div>);
+    };
+    const renderStructuredResults = () => {
+        // The daily brief is self-loading and needs no query, so it renders
+        // regardless of whether a lookup has been run.
+        if (activeTab === 'crypto' && chainView === 'brief') {
+            return (<div>
+          <SectionHeader title={__t("CHAIN INTEL \u2014 DAILY BRIEF")} icon={Bitcoin} color="#F7931A"/>
+          <ChainBrief />
+        </div>);
+        }
+        if (!results)
+            return null;
+        const r = results;
+        // ── PORT SCAN ──
+        if (activeTab === 'scanner') {
+            const ports = r.ports || r.open_ports || r.results || [];
+            const host = r.host || r.target || query;
+            return (<div>
+          <SectionHeader title={__t("HOST INFO")} icon={Server} color="#00E5FF"/>
+          <ResultRow label={__t("Target")} value={host} color="#00E5FF"/>
+          <ResultRow label={__t("Scan Type")} value={r.scan_type || scanType}/>
+          <ResultRow label={__t("Duration")} value={r.duration || r.scan_time}/>
+          {__tv(Array.isArray(ports) && ports.length > 0 && (<>
+              <SectionHeader title={__t("OPEN PORTS ({0})", ports.length)} icon={Wifi} color="#00E676"/>
+              <div className="space-y-0.5">
+                {__tv(ports.map((p: any, i: number) => (<PortRow key={i} port={p.port || p} state={p.state || 'open'} service={p.service || p.name} version={p.version}/>)))}
+              </div>
+            </>))}
+          {__tv((!Array.isArray(ports) || ports.length === 0) && renderFallback())}
+        </div>);
+        }
+        // ── VULN SCAN ──
+        if (activeTab === 'vuln') {
+            const vulns = r.vulnerabilities || r.vulns || r.cves || [];
+            const exploits = vulns.filter((v: any) => v.is_exploit);
+            const regularVulns = vulns.filter((v: any) => !v.is_exploit);
+            return (<div>
+          <SectionHeader title={__t("VULNERABILITY ASSESSMENT")} icon={Bug} color="#FF3D3D"/>
+          <ResultRow label={__t("Target")} value={r.target || query} color="#FF3D3D"/>
+          <ResultRow label={__t("Total CVEs")} value={Array.isArray(vulns) ? vulns.length : 0} color={Array.isArray(vulns) && vulns.length > 0 ? '#FF3D3D' : '#00E676'}/>
+          <ResultRow label={__t("Risk Level")} value={r.risk_level || r.severity}/>
+          {__tv(Array.isArray(regularVulns) && regularVulns.length > 0 && (<div className="mt-2 space-y-1">
+              {__tv(regularVulns.slice(0, 20).map((v: any, i: number) => (<div key={i} className="p-2 rounded-lg border border-red-500/20 bg-red-500/5 flex flex-col">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-mono font-bold text-red-400">{__tv(v.id || v.cve || v.name)}</span>
+                    {__tv(v.severity && <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded ${v.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-400' : v.severity === 'HIGH' ? 'bg-orange-500/20 text-orange-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{__tv(v.severity)}</span>)}
+                  </div>
+                  {__tv(v.cvss && <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1">{__t("CVSS: ")}{__tv(v.cvss)} ({__tv(v.type || 'cve')})</div>)}
+                  {__tv(v.description && <p className="text-[10px] font-mono text-[var(--text-muted)] mt-1 line-clamp-2">{__tv(v.description)}</p>)}
+                </div>)))}
+            </div>))}
+
+          {__tv(exploits.length > 0 && (<div className="mt-4">
+              <SectionHeader title={__t("POSSIBLE EXPLOITS ({0})", exploits.length)} icon={AlertTriangle} color="#FF9500"/>
+              <div className="mt-2 space-y-1">
+                {__tv(exploits.slice(0, 10).map((e: any, i: number) => (<div key={i} className="p-2 rounded-lg border border-orange-500/30 bg-orange-500/10 flex flex-col">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-mono font-bold text-orange-400">{__tv(e.id)}</span>
+                      <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400">{__t("EXPLOIT")}</span>
+                    </div>
+                    <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1 flex justify-between">
+                      <span>{__t("Source: ")}{__tv(e.type?.toUpperCase() || 'UNKNOWN')}</span>
+                      {__tv(e.cvss && <span>{__t("CVSS: ")}{__tv(e.cvss)}</span>)}
+                    </div>
+                  </div>)))}
+              </div>
+            </div>))}
+
+          {__tv((!Array.isArray(vulns) || vulns.length === 0) && renderFallback())}
+        </div>);
+        }
+        // ── DNS ──
+        if (activeTab === 'dns') {
+            return (<div>
+          <SectionHeader title={__t("DNS RECORDS")} icon={Server} color="#448AFF"/>
+          <ResultRow label={__t("Domain")} value={r.domain || query} color="#448AFF"/>
+          {__tv(r.A && <ResultRow label={__t("A Records")} value={Array.isArray(r.A) ? r.A.join(', ') : r.A}/>)}
+          {__tv(r.AAAA && <ResultRow label={__t("AAAA")} value={Array.isArray(r.AAAA) ? r.AAAA.join(', ') : r.AAAA}/>)}
+          {__tv(r.MX && <ResultRow label={__t("MX")} value={Array.isArray(r.MX) ? r.MX.map((m: any) => m.exchange || m).join(', ') : r.MX}/>)}
+          {__tv(r.NS && <ResultRow label={__t("NS")} value={Array.isArray(r.NS) ? r.NS.join(', ') : r.NS}/>)}
+          {__tv(r.TXT && <ResultRow label={__t("TXT")} value={Array.isArray(r.TXT) ? r.TXT.join(' | ') : r.TXT}/>)}
+          {__tv(r.CNAME && <ResultRow label={__t("CNAME")} value={Array.isArray(r.CNAME) ? r.CNAME.join(', ') : r.CNAME}/>)}
+          {__tv(r.SOA && <ResultRow label={__t("SOA")} value={typeof r.SOA === 'object' ? `${r.SOA.nsname} (${r.SOA.hostmaster})` : r.SOA}/>)}
+          {__tv(renderFallbackExcluding(['domain', 'A', 'AAAA', 'MX', 'NS', 'TXT', 'CNAME', 'SOA', 'timestamp', 'cached']))}
+        </div>);
+        }
+        // ── WHOIS ──
+        if (activeTab === 'whois') {
+            return (<div>
+          <SectionHeader title={__t("WHOIS INTELLIGENCE")} icon={FileText} color="#FFD700"/>
+          <SanctionsBadge match={r.sanctions_match}/>
+          <ResultRow label={__t("Domain")} value={r.domain_name || r.domainName || query} color="#FFD700"/>
+          <ResultRow label={__t("Registrar")} value={r.registrar}/>
+          <ResultRow label={__t("Created")} value={r.creation_date || r.createdDate}/>
+          <ResultRow label={__t("Expires")} value={r.expiration_date || r.expiresDate}/>
+          <ResultRow label={__t("Updated")} value={r.updated_date || r.updatedDate}/>
+          <ResultRow label={__t("Status")} value={Array.isArray(r.status) ? r.status.join(', ') : r.status}/>
+          <ResultRow label={__t("Nameservers")} value={Array.isArray(r.name_servers || r.nameServers) ? (r.name_servers || r.nameServers).join(', ') : r.name_servers}/>
+          {__tv(renderFallbackExcluding(['domain_name', 'domainName', 'registrar', 'creation_date', 'createdDate', 'expiration_date', 'expiresDate', 'updated_date', 'updatedDate', 'status', 'name_servers', 'nameServers', 'timestamp', 'cached', 'raw', 'sanctions_match']))}
+        </div>);
+        }
+        // ── SHODAN ──
+        if (activeTab === 'shodan') {
+            return (<div>
+          <SectionHeader title={__t("SHODAN IOT INTELLIGENCE")} icon={Network} color="#FF3D3D"/>
+          <ResultRow label={__t("Target IP")} value={r.ip || query} color="#FF3D3D"/>
+          {__tv(r.hostnames?.length > 0 && <ResultRow label={__t("Hostnames")} value={r.hostnames.join(', ')}/>)}
+          {__tv(r.ports?.length > 0 && <ResultRow label={__t("Open Ports")} value={r.ports.join(', ')} color="#00E5FF"/>)}
+          {__tv(r.tags?.length > 0 && <ResultRow label={__t("Tags")} value={r.tags.join(', ')} color="#FF9500"/>)}
+          {__tv(r.vulns?.length > 0 && (<div className="mt-2 p-2 border border-red-500/30 bg-red-500/10 rounded">
+              <span className="text-[11px] font-mono text-red-400 font-bold mb-1 block">{__t("VULNERABILITIES (")}{__tv(r.vulns.length)})</span>
+              <div className="flex flex-wrap gap-1">
+                {__tv(r.vulns.slice(0, 10).map((v: string) => (<a key={v} href={`https://nvd.nist.gov/vuln/detail/${v}`} target="_blank" rel="noreferrer" className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1A1A18] text-[#8A8880] hover:text-[#FF3D3D]">{__tv(v)}</a>)))}
+                {__tv(r.vulns.length > 10 && <span className="text-[10px] font-mono text-[#8A8880]">+{__tv(r.vulns.length - 10)}{__t(" more")}</span>)}
+              </div>
+            </div>))}
+          {__tv(renderFallbackExcluding(['ip', 'hostnames', 'ports', 'tags', 'vulns', 'cpes']))}
+        </div>);
+        }
+        // ── BGP ──
+        if (activeTab === 'bgp') {
+            return (<div>
+          <SectionHeader title={__t("BGP ROUTING INTELLIGENCE")} icon={Globe} color="#00E5FF"/>
+          <ResultRow label={__t("Query")} value={r.query} color="#00E5FF"/>
+          {__tv(r.type === 'ip' && r.ip && (<>
+              {__tv(r.ip.prefixes?.map((p: any, i: number) => (<div key={i} className="mt-2 p-2 border border-[#00E5FF]/20 bg-[#00E5FF]/5 rounded">
+                  <ResultRow label={__t("ASN")} value={`AS${p.asn.asn} - ${p.asn.name}`} color="#00E5FF"/>
+                  <ResultRow label={__t("Prefix")} value={p.prefix}/>
+                  <ResultRow label={__t("Country")} value={p.asn.country_code}/>
+                  <ResultRow label={__t("Description")} value={p.asn.description}/>
+                </div>)))}
+            </>))}
+          {__tv(r.type === 'asn' && r.asn && (<div className="mt-2 p-2 border border-[#00E5FF]/20 bg-[#00E5FF]/5 rounded">
+              <ResultRow label={__t("ASN")} value={`AS${r.asn.asn}`} color="#00E5FF"/>
+              <ResultRow label={__t("Name")} value={r.asn.name}/>
+              <ResultRow label={__t("Description")} value={r.asn.description}/>
+              <ResultRow label={__t("Country")} value={r.asn.country_code}/>
+              {__tv(r.prefixes && <ResultRow label={__t("Prefixes")} value={`IPv4: ${r.prefixes.total_v4} | IPv6: ${r.prefixes.total_v6}`}/>)}
+              {__tv(r.peers && <ResultRow label={__t("Peers")} value={r.peers.total}/>)}
+            </div>))}
+          {__tv(renderFallbackExcluding(['query', 'type', 'ip', 'asn', 'prefixes', 'peers', 'timestamp']))}
+        </div>);
+        }
+        // ── MAC ──
+        if (activeTab === 'mac') {
+            return (<div>
+          <SectionHeader title={__t("MAC VENDOR LOOKUP")} icon={Fingerprint} color="#FFD700"/>
+          <ResultRow label={__t("MAC Address")} value={r.mac} color="#FFD700"/>
+          <ResultRow label={__t("Vendor")} value={r.vendor} color={r.vendor === 'Not Found' ? '#FF3D3D' : '#00E676'}/>
+        </div>);
+        }
+        // ── PHONE ──
+        if (activeTab === 'phone') {
+            return (<div>
+          <SectionHeader title={__t("PHONE INTELLIGENCE")} icon={Phone} color="#FF9500"/>
+          <ResultRow label={__t("Query")} value={r.query} color="#FF9500"/>
+          <ResultRow label={__t("Valid")} value={r.valid ? 'YES' : 'NO'} color={r.valid ? '#00E676' : '#FF3D3D'}/>
+          {__tv(r.valid && (<>
+              <ResultRow label={__t("E.164 Format")} value={r.number}/>
+              <ResultRow label={__t("Intl Format")} value={r.international}/>
+              <ResultRow label={__t("Nat Format")} value={r.national}/>
+              <ResultRow label={__t("Country")} value={`${r.region} (${r.country_code})`}/>
+              <ResultRow label={__t("Line Type")} value={r.line_type} color={r.line_type === 'MOBILE' ? '#00E5FF' : r.line_type === 'VOIP' ? '#FF9500' : undefined}/>
+            </>))}
+        </div>);
+        }
+        // ── GITHUB ──
+        if (activeTab === 'github') {
+            return (<div>
+          <SectionHeader title={__t("GITHUB RECON")} icon={Terminal} color="#87CEEB"/>
+          <div className="flex items-center gap-3 mb-2">
+            {__tv(r.avatar_url && <img src={r.avatar_url} alt={__t("avatar")} className="w-10 h-10 rounded-full border border-[#87CEEB]/30"/>)}
+            <div>
+              <div className="text-[11px] font-mono font-bold text-[#87CEEB]">{__tv(r.name || r.username)}</div>
+              <div className="text-[10px] font-mono text-[var(--text-muted)]">@{__tv(r.username)} • {__tv(r.followers)}{__t(" followers")}</div>
+            </div>
+          </div>
+          <ResultRow label={__t("Company")} value={r.company}/>
+          <ResultRow label={__t("Location")} value={r.location}/>
+          <ResultRow label={__t("Email")} value={r.email} color="#00E676"/>
+          <ResultRow label={__t("Twitter")} value={r.twitter} color="#448AFF"/>
+          <ResultRow label={__t("Website")} value={r.blog}/>
+          <ResultRow label={__t("Bio")} value={r.bio}/>
+          {__tv(r.recent_repos?.length > 0 && (<div className="mt-2 p-2 border border-[#87CEEB]/20 bg-[#87CEEB]/5 rounded">
+              <span className="text-[10px] font-mono text-[#87CEEB] block mb-1">{__t("RECENT REPOS")}</span>
+              {__tv(r.recent_repos.map((repo: any, i: number) => (<div key={i} className="flex justify-between text-[10px] font-mono mb-0.5">
+                  <span className="text-[#E8E6E0]">{__tv(repo.name)}</span>
+                  <span className="text-[var(--text-muted)]">{__tv(repo.language || 'Unknown')}</span>
+                </div>)))}
+            </div>))}
+        </div>);
+        }
+        // ── USERNAME HUNT ──
+        if (activeTab === 'username') {
+            const ACCENT = '#00E676';
+            return (<div>
+          <SectionHeader title={__t("USERNAME HUNT")} icon={User} color={ACCENT}/>
+
+          <div className="grid grid-cols-4 gap-1.5 mb-2">
+            {__tv([
+                    { label: 'FOUND', value: r.found?.length ?? 0, color: ACCENT },
+                    { label: 'UNSURE', value: r.inconclusive?.length ?? 0, color: '#FF9500' },
+                    { label: 'BLOCKED', value: r.blocked?.length ?? 0, color: '#E040FB' },
+                    { label: 'CHECKED', value: r.checked ?? 0, color: '#87CEEB' },
+                ].map((c: any) => (<div key={c.label} className="rounded border px-2 py-1.5" style={{ borderColor: `${c.color}33`, background: `${c.color}0d` }}>
+                <div className="text-[9px] font-mono text-[var(--text-muted)]">{__tv(c.label)}</div>
+                <div className="text-[11px] font-mono font-bold" style={{ color: c.color }}>{__tv(c.value)}</div>
+              </div>)))}
+          </div>
+          <ResultRow label={__t("Handle")} value={r.username} color={ACCENT}/>
+          <ResultRow label={__t("Coverage")} value={`${r.checked} of ${r.total_available} sites · ${r.not_found_count ?? 0} ruled out`}/>
+          <ResultRow label={__t("Elapsed")} value={r.elapsed_ms ? `${(r.elapsed_ms / 1000).toFixed(1)}s` : null}/>
+
+          {__tv(r.found?.length > 0 && (<>
+              <SectionHeader title={__t("CONFIRMED ACCOUNTS ({0})", r.found.length)} icon={CheckCircle} color={ACCENT}/>
+              {__tv(r.found.map((f: any, i: number) => (<div key={i} className="flex items-center gap-2 py-1 text-[11px] font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: ACCENT }}/>
+                  <span className="w-[110px] flex-shrink-0 font-bold" style={{ color: ACCENT }}>{__tv(f.site)}</span>
+                  <a href={f.url} target="_blank" rel="noopener noreferrer" className="flex-1 break-all text-[var(--text-secondary)] hover:text-white hover:underline flex items-center gap-1">
+                    {__tv(f.url.replace(/^https?:\/\//, ''))}
+                    <ExternalLink className="w-2.5 h-2.5 flex-shrink-0"/>
+                  </a>
+                </div>)))}
+            </>))}
+
+          {/* Positives that a control username also triggered — shown apart so
+                    they are never mistaken for real accounts. */}
+          {__tv(r.inconclusive?.length > 0 && (<>
+              <SectionHeader title={__t("UNVERIFIABLE ({0})", r.inconclusive.length)} icon={AlertTriangle} color="#FF9500"/>
+              <div className="text-[10px] font-mono text-[var(--text-secondary)] leading-snug mb-1">{__t("These sites answered &quot;exists&quot; for a random control handle too, so a hit here is not evidence of an account.")}</div>
+              {__tv(r.inconclusive.map((f: any, i: number) => (<div key={i} className="flex items-center gap-2 py-1 text-[11px] font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#FF9500]"/>
+                  <span className="w-[110px] flex-shrink-0 text-[#FF9500]">{__tv(f.site)}</span>
+                  <a href={f.url} target="_blank" rel="noopener noreferrer" className="flex-1 break-all text-[var(--text-muted)] hover:text-white hover:underline">
+                    {__tv(f.url.replace(/^https?:\/\//, ''))}
+                  </a>
+                </div>)))}
+            </>))}
+
+          {/* Refused the request — absence was never established here, so these
+                    must not be silently folded into "not found". */}
+          {__tv(r.blocked?.length > 0 && (<>
+              <SectionHeader title={__t("BLOCKED \u2014 NOT CHECKED ({0})", r.blocked.length)} icon={ShieldAlert} color="#E040FB"/>
+              <div className="text-[10px] font-mono text-[var(--text-secondary)] leading-snug mb-1">{__t("These sites refused the lookup, so nothing was learned either way \u2014 an account here is neither confirmed nor ruled out.")}</div>
+              {__tv(r.blocked.map((f: any, i: number) => (<div key={i} className="flex items-center gap-2 py-0.5 text-[10px] font-mono">
+                  <span className="w-[110px] flex-shrink-0 text-[#E040FB]">{__tv(f.site)}</span>
+                  <a href={f.url} target="_blank" rel="noopener noreferrer" className="flex-1 break-all text-[var(--text-muted)] hover:text-white hover:underline">{__t("check manually")}</a>
+                  <span className="text-[var(--text-muted)]">{__tv(f.reason)}</span>
+                </div>)))}
+            </>))}
+
+          {__tv(r.errors?.length > 0 && (<>
+              <SectionHeader title={__t("UNREACHABLE ({0})", r.errors.length)} icon={XCircle} color="#FF3D3D"/>
+              {__tv(r.errors.slice(0, 10).map((f: any, i: number) => (<div key={i} className="flex items-center gap-2 py-0.5 text-[10px] font-mono">
+                  <span className="w-[110px] flex-shrink-0 text-[#FF3D3D]">{__tv(f.site)}</span>
+                  <span className="flex-1 text-[var(--text-muted)]">{__tv(f.reason)}</span>
+                </div>)))}
+            </>))}
+
+          {__tv(r.skipped?.length > 0 && (<>
+              <SectionHeader title={__t("NOT APPLICABLE ({0})", r.skipped.length)} icon={XCircle} color="#5C5A54"/>
+              <div className="text-[10px] font-mono text-[var(--text-muted)] leading-snug">
+                {__tv(r.skipped.map((s: any) => s.site).join(', '))}{__t(" \u2014 the handle does not meet these sites&apos; username rules.")}</div>
+            </>))}
+
+          <div className="mt-3 text-[9px] font-mono text-[var(--text-muted)] leading-relaxed">
+            {__tv(r.verified
+                    ? 'Every positive re-tested against a random control handle; sites that accepted it are listed as unverifiable. Calibration catches most soft 404s but is not exhaustive — confirm before acting.'
+                    : 'Calibration disabled — positives are unfiltered and include soft 404s.')}
+            <br />{__t("Source: ")}{__tv(r.source)}
+          </div>
+        </div>);
+        }
+        // ── CHAIN INTEL ──
+        // Shares /api/osint/crypto with the standalone CHAIN panel; this is the
+        // in-toolkit view of the same wallet report.
+        if (activeTab === 'crypto') {
+            const ACCENT = '#F7931A';
+            const RISK_COLOR: Record<string, string> = {
+                critical: '#FF1744', high: '#FF3D3D', medium: '#FF9500', low: '#FFD700', info: '#00E676',
+            };
+            const riskColor = RISK_COLOR[r.risk?.level] || '#00E676';
+            const fmt = (n: number, d = 4) => typeof n === 'number' && Number.isFinite(n)
+                ? n.toLocaleString(undefined, { maximumFractionDigits: d })
+                : '—';
+            const short = (a: string) => (a && a.length > 20 ? `${a.slice(0, 10)}…${a.slice(-8)}` : a);
+            return (<div>
+          <SectionHeader title={__t("CHAIN INTEL")} icon={Bitcoin} color={ACCENT}/>
+
+          {/* A sanctions hit dominates the report — surface it before anything else. */}
+          {__tv(r.sanctions?.hit && (<div className="mb-2 px-2 py-2 rounded border border-red-500/40 bg-red-500/15">
+              <div className="flex items-center gap-2 mb-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-400"/>
+                <span className="text-[11px] font-mono font-bold text-red-400 tracking-wider">{__t("OFAC SANCTIONED WALLET")}</span>
+              </div>
+              {__tv((r.sanctions.entries || []).map((e: any, i: number) => (<div key={i} className="text-[10px] font-mono text-red-200 break-all leading-tight">
+                  ↳ {__tv(e.name)}{__tv(e.programs?.length ? ` — ${e.programs.join(', ')}` : '')}
+                </div>)))}
+            </div>))}
+
+          <div className="flex items-center gap-2 mb-2">
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold border" style={{ color: ACCENT, borderColor: `${ACCENT}55`, background: `${ACCENT}18` }}>
+              {__tv(r.chain_label?.toUpperCase())}
+            </span>
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold border" style={{ color: riskColor, borderColor: `${riskColor}55`, background: `${riskColor}18` }}>{__t("RISK ")}{__tv(r.risk?.score)} · {__tv(String(r.risk?.level || '').toUpperCase())}
+            </span>
+          </div>
+
+          <ResultRow label={__t("Address")} value={r.address} color={ACCENT}/>
+          <ResultRow label={__t("Balance")} value={`${fmt(r.balance?.native, 8)} ${r.symbol}`} color="#00E676"/>
+          <ResultRow label={__t("Value (USD)")} value={r.balance?.usd != null ? `$${fmt(r.balance.usd, 2)}` : 'price unavailable'}/>
+          <ResultRow label={__t("Spot price")} value={r.balance?.price_usd != null ? `$${fmt(r.balance.price_usd, 2)}` : null}/>
+          <ResultRow label={__t("Transactions")} value={r.activity?.tx_count?.toLocaleString()}/>
+          <ResultRow label={__t("Last active")} value={r.activity?.last_seen ? `${String(r.activity.last_seen).slice(0, 10)} (${r.activity.dormant_days}d ago)` : null}/>
+          {/* age_days is withheld by the API whenever the sample cannot prove it. */}
+          <ResultRow label={__t("Age")} value={r.activity?.age_days != null ? `${r.activity.age_days} days` : 'unknown — history exceeds sample'} color={r.activity?.age_days != null ? undefined : 'var(--text-muted)'}/>
+          {__tv(r.ambiguous_chain && (<ResultRow label={__t("Note")} value="Address format is valid on both Bitcoin and Solana; assumed Bitcoin." color="#FFD700"/>))}
+
+          {__tv(r.labels?.length > 0 && (<div className="flex flex-wrap gap-1 mt-2">
+              {__tv(r.labels.map((l: string, i: number) => (<span key={i} className="px-1.5 py-0.5 rounded text-[10px] font-mono border border-white/15 text-[var(--text-secondary)] bg-white/5">
+                  {__tv(l)}
+                </span>)))}
+            </div>))}
+
+          {__tv(r.flow && (<>
+              <SectionHeader title={__t("FLOW")} icon={Layers} color={ACCENT}/>
+              <ResultRow label={__t("Total in")} value={`${fmt(r.flow.total_in)} ${r.symbol}`} color="#00E676"/>
+              <ResultRow label={__t("Total out")} value={`${fmt(r.flow.total_out)} ${r.symbol}`} color="#FF9500"/>
+              <ResultRow label={__t("Net")} value={`${fmt(r.flow.net)} ${r.symbol}`}/>
+            </>))}
+
+          {__tv(r.risk?.factors?.length > 0 && (<>
+              <SectionHeader title={__t("RISK FACTORS")} icon={AlertTriangle} color={riskColor}/>
+              {__tv(r.risk.factors.map((f: any, i: number) => (<div key={i} className="py-1.5 border-b border-[var(--border-secondary)]/20 last:border-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono font-bold" style={{ color: RISK_COLOR[f.severity] || '#00E676' }}>
+                      {__tv(f.label)}
+                    </span>
+                    {__tv(f.weight > 0 && (<span className="text-[9px] font-mono text-[var(--text-muted)]">+{__tv(f.weight)}</span>))}
+                  </div>
+                  <div className="text-[10px] font-mono text-[var(--text-secondary)] leading-snug mt-0.5">{__tv(f.detail)}</div>
+                </div>)))}
+            </>))}
+
+          {__tv(r.counterparties?.length > 0 && (<>
+              <SectionHeader title={__t("TOP COUNTERPARTIES ({0})", r.counterparties.length)} icon={Network} color={ACCENT}/>
+              {__tv(r.counterparties.slice(0, 10).map((c: any, i: number) => (<div key={i} className="flex items-center gap-2 py-1 text-[10px] font-mono">
+                  <span className={`w-[34px] flex-shrink-0 font-bold ${c.direction === 'out' ? 'text-[#FF9500]' : c.direction === 'in' ? 'text-[#00E676]' : 'text-[var(--text-muted)]'}`}>
+                    {__tv(c.direction === 'out' ? 'OUT' : c.direction === 'in' ? 'IN' : 'BOTH')}
+                  </span>
+                  <span className="flex-1 break-all text-[var(--text-primary)]">{__tv(short(c.address))}</span>
+                  <span className="text-[var(--text-muted)]">{__tv(c.txs)}×</span>
+                  <span className="text-[var(--text-secondary)] w-[70px] text-right">{__tv(fmt(c.value))}</span>
+                </div>)))}
+            </>))}
+
+          {__tv(r.tokens?.length > 0 && (<>
+              <SectionHeader title={__t("TOKENS ({0})", r.tokens.length)} icon={Layers} color={ACCENT}/>
+              <div className="flex flex-wrap gap-1">
+                {__tv(r.tokens.slice(0, 20).map((t: any, i: number) => (<span key={i} className="px-1.5 py-0.5 rounded text-[10px] font-mono border border-white/15 bg-white/5 text-[var(--text-secondary)]">
+                    {__tv(t.symbol)}{__tv(t.amount != null ? ` ${fmt(t.amount, 2)}` : '')}
+                  </span>)))}
+              </div>
+            </>))}
+
+          {__tv(r.transactions?.length > 0 && (<>
+              <SectionHeader title={__t("RECENT TRANSACTIONS ({0})", r.transactions.length)} icon={Clock} color={ACCENT}/>
+              {__tv(r.transactions.slice(0, 12).map((t: any, i: number) => (<div key={i} className="flex items-center gap-2 py-1 text-[10px] font-mono">
+                  <span className={`w-[34px] flex-shrink-0 font-bold ${t.direction === 'out' ? 'text-[#FF9500]' : t.direction === 'in' ? 'text-[#00E676]' : 'text-[var(--text-muted)]'}`}>
+                    {__tv(t.direction === 'unknown' ? '—' : t.direction.toUpperCase())}
+                  </span>
+                  <span className="text-[var(--text-muted)] w-[64px] flex-shrink-0">{__tv(t.time ? String(t.time).slice(0, 10) : 'pending')}</span>
+                  <span className="flex-1 break-all text-[var(--text-primary)]">{__tv(short(t.hash))}</span>
+                  {__tv(t.failed && <span className="text-[#FF3D3D]">{__t("FAIL")}</span>)}
+                  {__tv(t.value > 0 && <span className="text-[var(--text-secondary)]">{__tv(fmt(t.value))}</span>)}
+                </div>)))}
+            </>))}
+
+          {/* Honesty rail: what this report could not establish. */}
+          {__tv(r.partial?.length > 0 && (<div className="mt-3 px-2 py-1.5 rounded border border-white/10 bg-white/[0.03]">
+              <span className="text-[10px] font-mono text-[var(--text-muted)] block mb-0.5">{__t("COVERAGE LIMITS")}</span>
+              {__tv(r.partial.map((p: string, i: number) => (<div key={i} className="text-[10px] font-mono text-[var(--text-secondary)] leading-snug">↳ {__tv(p)}</div>)))}
+            </div>))}
+
+          <div className="mt-2 text-[9px] font-mono text-[var(--text-muted)]">{__t("Sources: ")}{__tv((r.sources || []).join(' · '))}
+            {__tv(r.activity && ` · sampled ${r.activity.sample_size} tx${r.activity.history_complete ? ' (full history)' : ' of a longer history'}`)}
+          </div>
+        </div>);
+        }
+        // ── LEAKS ──
+        if (activeTab === 'leaks') {
+            return (<div>
+          <SectionHeader title={__t("DATA LEAK SWEEP")} icon={ShieldAlert} color="#E040FB"/>
+          <ResultRow label={__t("Email Target")} value={r.email} color="#E040FB"/>
+          <ResultRow label={__t("Status")} value={r.breached ? 'COMPROMISED' : 'SECURE'} color={r.breached ? '#FF1744' : '#00E676'}/>
+
+          {__tv(r.breached && r.data_exposed?.length > 0 && (<div className="mt-2 p-2 border border-[#E040FB]/30 bg-[#E040FB]/10 rounded">
+              <span className="text-[11px] font-mono text-[#E040FB] font-bold mb-1 block">{__t("EXPOSED DATA POINTS")}</span>
+              <div className="flex flex-wrap gap-1">
+                {__tv(r.data_exposed.map((dc: string) => (<span key={dc} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1A1A18] text-[#E8E6E0] border border-[#E040FB]/20">{__tv(dc)}</span>)))}
+              </div>
+            </div>))}
+
+          {__tv(r.breached && r.breaches?.length > 0 && (<div className="mt-2 p-2 border border-red-500/30 bg-red-500/10 rounded">
+              <span className="text-[11px] font-mono text-red-400 font-bold mb-1 block">{__t("KNOWN BREACHES (")}{__tv(r.breaches.length)})</span>
+              <div className="flex flex-col gap-1">
+                {__tv(r.breaches.map((b: string) => (<a key={b} href={`https://haveibeenpwned.com/PwnedWebsites#${b}`} target="_blank" rel="noreferrer" className="text-[10px] font-mono px-2 py-1 rounded bg-[#1A1A18] text-red-300 hover:text-white hover:bg-red-500/30 flex items-center justify-between transition-colors">
+                    <span>{__tv(b)}</span>
+                    <ExternalLink className="w-2.5 h-2.5"/>
+                  </a>)))}
+              </div>
+            </div>))}
+        </div>);
+        }
+        // ── CERTS ──
+        if (activeTab === 'certs') {
+            const certs = r.certificates || r.certs || (Array.isArray(r) ? r : []);
+            return (<div>
+          <SectionHeader title={__t("CERTIFICATE TRANSPARENCY")} icon={Lock} color="#E040FB"/>
+          <ResultRow label={__t("Domain")} value={query} color="#E040FB"/>
+          <ResultRow label={__t("Certificates")} value={Array.isArray(certs) ? certs.length : 0}/>
+          {__tv(Array.isArray(certs) && certs.slice(0, 15).map((c: any, i: number) => (<div key={i} className="mt-1.5 p-2 rounded border border-[var(--border-secondary)]/30 bg-[var(--bg-tertiary)]/30">
+              <ResultRow label={__t("Issuer")} value={c.issuer_name || c.issuer}/>
+              <ResultRow label={__t("Common Name")} value={c.common_name || c.name_value}/>
+              <ResultRow label={__t("Not Before")} value={c.not_before}/>
+              <ResultRow label={__t("Not After")} value={c.not_after}/>
+            </div>)))}
+          {__tv((!Array.isArray(certs) || certs.length === 0) && renderFallback())}
+        </div>);
+        }
+        // ── THREATS ──
+        if (activeTab === 'threats') {
+            return (<div>
+          <SectionHeader title={__t("THREAT INTELLIGENCE")} icon={AlertTriangle} color="#FF9500"/>
+          <ResultRow label={__t("Query")} value={query} color="#FF9500"/>
+          <ResultRow label={__t("Risk Score")} value={r.risk_score || r.score} color={(r.risk_score || r.score || 0) > 70 ? '#FF3D3D' : (r.risk_score || r.score || 0) > 40 ? '#FF9500' : '#00E676'}/>
+          <ResultRow label={__t("Malicious")} value={r.malicious !== undefined ? (r.malicious ? 'YES' : 'NO') : undefined} color={r.malicious ? '#FF3D3D' : '#00E676'}/>
+          <ResultRow label={__t("Category")} value={r.category || r.type}/>
+          <ResultRow label={__t("Reports")} value={r.total_reports || r.reports}/>
+          <ResultRow label={__t("Last Seen")} value={r.last_seen || r.last_analysis}/>
+          {__tv(r.tags && <ResultRow label={__t("Tags")} value={Array.isArray(r.tags) ? r.tags.join(', ') : r.tags}/>)}
+          {__tv(renderFallbackExcluding(['risk_score', 'score', 'malicious', 'category', 'type', 'total_reports', 'reports', 'last_seen', 'last_analysis', 'tags', 'timestamp', 'cached', 'query']))}
+        </div>);
+        }
+        // ── SSL ──
+        if (activeTab === 'ssl') {
+            return (<div>
+          <SectionHeader title={__t("SSL/TLS ANALYSIS")} icon={Shield} color="#76FF03"/>
+          <ResultRow label={__t("Target")} value={query} color="#76FF03"/>
+          <ResultRow label={__t("Protocol")} value={r.protocol || r.tls_version}/>
+          <ResultRow label={__t("Cipher")} value={r.cipher || r.cipher_suite}/>
+          <ResultRow label={__t("Valid")} value={r.valid !== undefined ? (r.valid ? 'YES' : 'NO') : undefined} color={r.valid ? '#00E676' : '#FF3D3D'}/>
+          <ResultRow label={__t("Issuer")} value={r.issuer}/>
+          <ResultRow label={__t("Subject")} value={r.subject}/>
+          <ResultRow label={__t("Expires")} value={r.expires || r.not_after}/>
+          <ResultRow label={__t("SANs")} value={Array.isArray(r.sans) ? r.sans.join(', ') : r.sans}/>
+          {__tv(renderFallback())}
+        </div>);
+        }
+        // Fallback for other tools
+        return renderFallback();
+    };
+    const renderFallback = () => {
+        if (!results)
+            return null;
+        return (<div className="space-y-1">
+        {__tv(Object.entries(results).filter(([k]) => !['timestamp', 'cached'].includes(k)).map(([key, value]) => (<ResultRow key={key} label={__tv(key.replace(/_/g, ' '))} value={typeof value === 'object' ? JSON.stringify(value, null, 1) : String(value)}/>)))}
+      </div>);
+    };
+    const renderFallbackExcluding = (exclude: string[]) => {
+        if (!results)
+            return null;
+        const extra = Object.entries(results).filter(([k]) => !exclude.includes(k));
+        if (extra.length === 0)
+            return null;
+        return (<div className="mt-2 space-y-1">
+        {__tv(extra.map(([key, value]) => (<ResultRow key={key} label={__tv(key.replace(/_/g, ' '))} value={typeof value === 'object' ? JSON.stringify(value, null, 1) : String(value)}/>)))}
+      </div>);
+    };
+    /* ── Expanded-view tool rail ──────────────────────────────────
+       Fullscreen has room for the full label plus a one-line description, so
+       the toolkit becomes a readable list rather than a grid of abbreviations. */
+    const renderToolRail = () => (<div className="flex flex-col h-full">
+      <div className="relative p-3 pb-2 flex-shrink-0">
+        <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-muted)]"/>
+        <input value={toolFilter} onChange={e => setToolFilter(e.target.value)} placeholder={__t("Filter tools\u2026")} className="w-full bg-[var(--bg-primary)]/60 border border-[var(--border-primary)] rounded-lg pl-8 pr-7 py-2 text-[10px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-muted)]/40 focus:outline-none"/>
+        {__tv(toolFilter && (<button onClick={() => setToolFilter('')} className="absolute right-5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-white">
+            <XCircle className="w-3.5 h-3.5"/>
+          </button>))}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 pb-3 styled-scrollbar">
+        {__tv(GROUPS.map(group => {
+            const tools = TABS.filter(t => t.group === group.id && matchesFilter(t));
+            if (!tools.length)
+                return null;
+            return (<div key={group.id} className="mb-3 last:mb-0">
+              <div className="text-[10px] font-mono tracking-[0.2em] text-[var(--text-muted)]/70 mb-1.5 pt-1">
+                {__tv(group.label)}
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {__tv(tools.map(tab => {
+                    const active = activeTab === tab.id;
+                    return (<button key={tab.id} onClick={() => selectTool(tab.id)} className="group flex items-start gap-2.5 px-2 py-1.5 rounded-lg border text-left transition-all" style={{
+                            borderColor: active ? `${tab.color}55` : 'transparent',
+                            background: active ? `${tab.color}14` : undefined,
+                        }}>
+                      <tab.icon className="w-4 h-4 mt-0.5 flex-shrink-0 transition-colors" style={{ color: active ? tab.color : 'var(--text-muted)' }}/>
+                      <span className="min-w-0">
+                        <span className="block text-[10px] font-mono font-bold tracking-wider leading-tight" style={{ color: active ? tab.color : 'var(--text-secondary)' }}>
+                          {__tv(tab.label)}
+                        </span>
+                        <span className="block text-[10px] font-mono text-[var(--text-muted)] leading-snug">
+                          {__tv(tab.blurb)}
+                        </span>
+                      </span>
+                    </button>);
+                }))}
+              </div>
+            </div>);
+        }))}
+        {__tv(toolFilter && !TABS.some(matchesFilter) && (<div className="text-[11px] font-mono text-[var(--text-muted)] py-3 text-center">{__t("No tool matches \u201C")}{__tv(toolFilter)}”.
+          </div>))}
+      </div>
+
+      <div className="px-3 py-2 border-t border-[var(--border-secondary)] flex-shrink-0">
+        <button onClick={handleSelfTrack} disabled={loading} className={`w-full py-2 rounded-lg border flex items-center justify-center gap-2 transition-all ${loading ? 'opacity-60 cursor-wait' : 'hover:bg-[var(--hover-accent)]'}`} style={{ borderColor: 'rgba(0, 230, 118, 0.25)' }}>
+          <LocateFixed className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} style={{ color: '#00E676' }}/>
+          <span className="font-mono font-bold tracking-[0.1em] text-[11px]" style={{ color: '#00E676' }}>
+            {__tv(loading ? 'TRACKING…' : 'SELF TRACK')}
+          </span>
+        </button>
+      </div>
+    </div>);
+    const renderContent = () => (<div className="flex flex-col gap-2.5">
+      {/* Tool grid — omitted entirely in the expanded view, which uses the
+            rail instead. Hiding it with CSS would leave a second "Filter tools"
+            input in the DOM competing with the rail's. */}
+      {__tv(!isFullScreen && (<div className="flex flex-col gap-1">
+        {/* Sweep & Self Track Actions */}
+        <div className="grid grid-cols-2 gap-2">
+          {__tv(TABS.filter(t => t.id === 'sweep').map(tab => (<button key={tab.id} onClick={() => {
+                    setActiveTab(tab.id);
+                    setQuery('');
+                    setResults(null);
+                    setError('');
+                    setSweepResult(null);
+                }} className={`w-full py-4 rounded-lg border flex flex-col items-center justify-center gap-2 transition-all ${activeTab === tab.id ? 'bg-[var(--bg-tertiary)] border-opacity-50' : 'bg-[#0D0D0C] hover:bg-[var(--hover-accent)] border-transparent'}`} style={{ borderColor: activeTab === tab.id ? tab.color : 'rgba(255, 61, 61, 0.2)' }}>
+                <div className="flex items-center gap-3">
+                  <tab.icon className="w-5 h-5" style={{ color: tab.color }}/>
+                  <span className="font-mono font-bold tracking-[0.1em] text-[10px]" style={{ color: tab.color }}>{__t("GLOBAL SWEEP")}</span>
+                </div>
+            </button>)))}
+          <button onClick={handleSelfTrack} disabled={loading} className={`w-full py-4 rounded-lg border flex flex-col items-center justify-center gap-2 transition-all ${loading ? 'opacity-60 cursor-wait' : 'hover:bg-[var(--hover-accent)] hover:shadow-[0_0_20px_rgba(0,230,118,0.15)]'} bg-[#0D0D0C]`} style={{ borderColor: 'rgba(0, 230, 118, 0.2)' }}>
+            <div className="flex items-center gap-3">
+              <LocateFixed className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} style={{ color: '#00E676' }}/>
+              <span className="font-mono font-bold tracking-[0.1em] text-[10px]" style={{ color: '#00E676' }}>{__tv(loading ? 'TRACKING...' : 'SELF TRACK')}</span>
+            </div>
+          </button>
+        </div>
+        {/* Toolkit — grouped so 19 modules stay scannable, and at 4 columns
+                every label fits without truncation. */}
+        <div className="mt-2">
+          <div className="relative mb-1.5">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-[var(--text-muted)]"/>
+            <input value={toolFilter} onChange={e => setToolFilter(e.target.value)} placeholder={__t("Filter tools\u2026")} className="w-full bg-[var(--bg-primary)]/60 border border-[var(--border-primary)] rounded-lg pl-7 pr-6 py-1.5 text-[10px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-muted)]/40 focus:outline-none"/>
+            {__tv(toolFilter && (<button onClick={() => setToolFilter('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-white">
+                <XCircle className="w-3 h-3"/>
+              </button>))}
+          </div>
+
+          {__tv(GROUPS.map(group => {
+                const tools = TABS.filter(t => t.group === group.id && t.id !== 'sweep' && matchesFilter(t));
+                if (!tools.length)
+                    return null;
+                return (<div key={group.id} className="mb-2 last:mb-0">
+                <div className="text-[9px] font-mono tracking-[0.18em] text-[var(--text-muted)]/60 mb-1">{__tv(group.label)}</div>
+                <div className="grid grid-cols-4 gap-1">
+                  {__tv(tools.map(tab => (<button key={tab.id} onClick={() => selectTool(tab.id)} title={__tv(tab.blurb)} className={`flex flex-col items-center gap-1 px-1 py-2 rounded-lg text-[9px] font-mono tracking-wider transition-all border ${activeTab === tab.id ? 'border-opacity-40 bg-opacity-15' : 'border-transparent hover:bg-[var(--hover-accent)]'}`} style={{ borderColor: activeTab === tab.id ? tab.color : 'transparent', backgroundColor: activeTab === tab.id ? `${tab.color}15` : undefined, color: activeTab === tab.id ? tab.color : 'var(--text-muted)' }}>
+                      <tab.icon className="w-3.5 h-3.5"/>
+                      <span className="leading-tight text-center w-full">{__tv(tab.label)}</span>
+                    </button>)))}
+                </div>
+              </div>);
+            }))}
+
+          {__tv(toolFilter && !TABS.some(t => t.id !== 'sweep' && matchesFilter(t)) && (<div className="text-[10px] font-mono text-[var(--text-muted)] py-2 text-center">{__t("No tool matches \u201C")}{__tv(toolFilter)}”.
+            </div>))}
+        </div>
+      </div>))}
+
+      {/* FINGERPRINT brings its own search bar, results and history. */}
+      {__tv(activeTab === 'fingerprint' && <FingerprintSearch fp={fingerprint} isFullScreen={isFullScreen}/>)}
+
+      {/* So does DONBOT — the same scan as Markets → Crypto, sealed in its own frame. */}
+      {__tv(activeTab === 'donbot' && <DonBotScan initial={donbotQuery} onScan={setDonbotQuery}/>)}
+
+      {/* Input Area */}
+      {__tv(activeTab !== 'fingerprint' && activeTab !== 'donbot' && (<div className="flex flex-col gap-1.5">
+        {/* CHAIN INTEL view switch — the brief takes no target. */}
+        {__tv(activeTab === 'crypto' && (<div className="flex gap-1">
+            {__tv(([['brief', 'DAILY BRIEF'], ['wallet', 'WALLET FORENSICS']] as const).map(([id, label]) => (<button key={id} onClick={() => setChainView(id)} className="px-2 py-1 rounded text-[10px] font-mono font-bold tracking-wider transition-colors" style={{
+                        color: chainView === id ? currentTab?.color : 'var(--text-muted)',
+                        background: chainView === id ? `${currentTab?.color}1a` : 'transparent',
+                        border: `1px solid ${chainView === id ? `${currentTab?.color}55` : 'rgba(255,255,255,0.1)'}`,
+                    }}>
+                {__tv(label)}
+              </button>)))}
+          </div>))}
+
+        {__tv(!(activeTab === 'crypto' && chainView === 'brief') && (<div className="flex gap-1.5">
+          <div className="flex-1 relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-muted)]"/>
+            <input type="text" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && runLookup()} placeholder={__tv(currentTab?.placeholder)} className="w-full bg-[var(--bg-primary)]/60 border border-[var(--border-primary)] rounded-lg pl-8 pr-3 py-2.5 text-[10px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-muted)]/40 focus:outline-none transition-colors" style={{ borderColor: query ? `${currentTab?.color}40` : undefined }}/>
+          </div>
+          <button onClick={runLookup} disabled={loading || !query.trim()} className="px-4 py-2 rounded-lg text-[11px] font-mono font-bold tracking-wider disabled:opacity-30 transition-all flex items-center justify-center min-w-[70px]" style={{ backgroundColor: `${currentTab?.color}20`, border: `1px solid ${currentTab?.color}40`, color: currentTab?.color }}>
+            {__tv(loading ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : 'SCAN')}
+          </button>
+        </div>))}
+
+        {/* Secondary Controls */}
+        {__tv(activeTab === 'scanner' && (<select value={scanType} onChange={e => setScanType(e.target.value)} className="bg-[var(--bg-primary)]/60 border border-[var(--border-primary)] rounded-lg px-2 py-1.5 text-[11px] font-mono text-[var(--text-muted)] outline-none w-full">
+            <option value="quick">{__t("QUICK SCAN")}</option><option value="deep">{__t("DEEP SCAN")}</option><option value="ports">{__t("TOP 1000 PORTS")}</option>
+          </select>))}
+        {__tv(activeTab === 'sweep' && (<div className="flex items-center justify-between bg-[var(--bg-primary)]/60 border border-[var(--border-primary)] rounded-lg p-1">
+            <span className="text-[10px] font-mono text-[var(--text-muted)] pl-2">{__t("SUBNET MASK:")}</span>
+            <div className="flex items-center gap-0.5">
+              {__tv([24, 25, 26, 27, 28].map(c => (<button key={c} onClick={() => setSweepCidr(c)} className={`px-2 py-1 text-[11px] font-mono rounded transition-all ${sweepCidr === c ? 'bg-[#FF3D3D]/20 text-[#FF3D3D]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)]'}`}>/{__tv(c)}</button>)))}
+            </div>
+          </div>))}
+      </div>))}
+
+      {__tv(error && (<div className="p-2.5 rounded-lg border border-red-500/30 bg-red-500/10 text-[10px] font-mono text-red-400 flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0"/>{__tv(error)}
+        </div>))}
+
+      {/* Sweep Progress */}
+      {__tv(sweepProgress && loading && (<div className="p-3 rounded-lg border border-[#FF3D3D]/30 bg-[#FF3D3D]/5">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-mono tracking-wider text-[#FF3D3D]">{__t("SWEEPING SUBNET...")}</span>
+            <span className="text-[11px] font-mono text-[#E8E6E0]">{__tv(sweepProgress.total)}{__t(" hosts")}</span>
+          </div>
+          <div className="w-full h-1.5 bg-[#1A1A18] rounded-full overflow-hidden">
+            <div className="h-full rounded-full" style={{ width: '100%', background: 'linear-gradient(90deg, #FF3D3D, #FF6B00, #FFD700)', animation: 'sweep-pulse 1.5s ease-in-out infinite' }}/>
+          </div>
+        </div>))}
+
+      {/* Sweep Results */}
+      {__tv(sweepResult && !loading && activeTab === 'sweep' && (<div className="bg-[var(--bg-primary)]/40 border border-[var(--border-primary)] rounded-lg overflow-hidden max-h-[55vh] overflow-y-auto styled-scrollbar">
+          {/* Summary */}
+          <div className="p-3 border-b border-[#2A2A28]">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <div className="text-[10px] font-mono tracking-wider text-[#E8E6E0]">{__tv(sweepResult.subnet)}</div>
+                <div className="text-[10px] font-mono text-[#5C5A54]">{__tv(sweepResult.center.city)}, {__tv(sweepResult.center.country)} · {__tv(sweepResult.center.isp)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[18px] font-mono font-bold text-[#FF3D3D]">{__tv(sweepResult.summary.total_responsive)}</div>
+                <div className="text-[9px] font-mono text-[#5C5A54] tracking-wider">{__t("DEVICES FOUND")}</div>
+              </div>
+            </div>
+            {/* Breakdown Bar */}
+            <div className="flex h-2 rounded-full overflow-hidden bg-[#1A1A18] mb-2">
+              {__tv(Object.entries(sweepResult.summary.device_breakdown).map(([type, count]: [
+                string,
+                any
+            ]) => {
+                const device = sweepResult.devices.find((d: any) => d.device_type === type);
+                return <div key={type} style={{ width: `${(count / sweepResult.summary.total_responsive) * 100}%`, backgroundColor: device?.device_color || '#666' }} title={__tv(`${type}: ${count}`)}/>;
+            }))}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {__tv(Object.entries(sweepResult.summary.device_breakdown).map(([type, count]: [
+                string,
+                any
+            ]) => {
+                const device = sweepResult.devices.find((d: any) => d.device_type === type);
+                return (<div key={type} className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: device?.device_color || '#666' }}/>
+                    <span className="text-[10px] font-mono text-[#8A8880]">{__tv(type)}</span>
+                    <span className="text-[10px] font-mono text-[#E8E6E0] font-bold">{__tv(String(count))}</span>
+                  </div>);
+            }))}
+            </div>
+          </div>
+          {/* Visualize Button */}
+          <div className="p-3 border-b border-[#2A2A28]">
+            <button onClick={() => onSweepVisualize?.(sweepResult)} className="w-full py-2.5 rounded-lg font-mono text-[10px] tracking-wider font-bold transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2" style={{ background: 'linear-gradient(135deg, rgba(255,61,61,0.2), rgba(255,107,0,0.2))', border: '1px solid rgba(255,61,61,0.5)', color: '#FF3D3D', textShadow: '0 0 10px rgba(255,61,61,0.5)' }}>
+              <Globe className="w-4 h-4"/>{__t(" VISUALIZE ON GLOBE")}</button>
+          </div>
+          {/* Device List */}
+          <div className={isFullScreen ? "flex flex-col gap-3 p-4" : "divide-y divide-[#2A2A28]"}>
+            {__tv(sweepResult.devices.map((device: any) => {
+                const isExpanded = expandedDevice === device.ip;
+                return (<div key={device.ip} className={isFullScreen
+                        ? "bg-[#0D0D0C] border border-[#2A2A28] rounded-lg overflow-hidden hover:border-[#3A3A38] transition-colors"
+                        : "px-3 py-2.5 hover:bg-[rgba(255,255,255,0.02)] transition-colors"}>
+                {/* Device Header */}
+                <div className={isFullScreen
+                        ? "flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-[#151514] transition-colors"
+                        : "flex items-center justify-between mb-1"} onClick={() => {
+                        if (!isFullScreen)
+                            return;
+                        const next = isExpanded ? null : device.ip;
+                        setExpandedDevice(next);
+                        if (next && device.vulns.length > 0)
+                            fetchCveDetails(device.vulns);
+                    }}>
+                  <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: device.device_color }}/>
+                    <span className={`flex-shrink-0 ${isFullScreen ? "text-[14px]" : "text-[10px]"} font-mono font-bold text-[#E8E6E0]`}>{__tv(device.ip)}</span>
+                    {__tv(device.hostnames.length > 0 && (<span className={`${isFullScreen ? "text-[10px]" : "text-[10px]"} font-mono text-[#5C5A54] truncate min-w-0`}>{__tv(device.hostnames[0])}</span>))}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {__tv(device.vulns.length > 0 && (<span className={`${isFullScreen ? "text-[11px]" : "text-[9px]"} font-mono px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30 whitespace-nowrap`}>
+                        {__tv(device.vulns.length)}{__t(" CVEs")}</span>))}
+                    <span className={`${isFullScreen ? "text-[11px]" : "text-[9px]"} font-mono px-1.5 py-0.5 rounded whitespace-nowrap`} style={{ backgroundColor: device.device_color + '20', color: device.device_color, border: `1px solid ${device.device_color}40` }}>{__tv(device.device_type)}</span>
+                    {__tv(isFullScreen && (<ChevronDown className={`w-4 h-4 text-[#5C5A54] transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`}/>))}
+                  </div>
+                </div>
+
+                {/* Compact info (sidebar mode) */}
+                {__tv(!isFullScreen && (<>
+                    <div className="flex items-center gap-2 text-[10px] font-mono text-[#5C5A54]">
+                      <span>{__t("Ports: ")}{__tv(device.ports.slice(0, 8).join(', '))}{__tv(device.ports.length > 8 ? ` +${device.ports.length - 8}` : '')}</span>
+                      {__tv(device.vulns.length > 0 && (<div className="group relative flex items-center gap-1 cursor-help">
+                          <span className="text-[#FF3D3D] flex items-center gap-1">
+                            <AlertTriangle className="w-2.5 h-2.5"/> {__tv(device.vulns.length)}{__t(" CVEs")}</span>
+                          <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-50 p-2 bg-[#1A1A18] border border-[#FF3D3D50] rounded-md shadow-xl min-w-[140px] max-w-[220px] max-h-[150px] overflow-y-auto styled-scrollbar">
+                            <div className="text-[9px] font-mono text-[#FF3D3D] mb-1 tracking-wider uppercase border-b border-[#FF3D3D30] pb-1">{__t("Identified Vulnerabilities")}</div>
+                            <div className="flex flex-col gap-0.5">
+                              {__tv(device.vulns.map((cve: string) => (<a key={cve} href={`https://nvd.nist.gov/vuln/detail/${cve}`} target="_blank" rel="noreferrer" className="text-[10px] font-mono text-[#E8E6E0] hover:text-[#FF3D3D] transition-colors truncate">
+                                  {__tv(cve)}
+                                </a>)))}
+                            </div>
+                          </div>
+                        </div>))}
+                    </div>
+                    {__tv(device.hostnames.length > 0 && <div className="text-[10px] font-mono text-[#8A8880] mt-0.5 truncate">{__tv(device.hostnames[0])}</div>)}
+                  </>))}
+
+                {/* Full-Screen Expanded Detail */}
+                {__tv(isFullScreen && isExpanded && (<div className="border-t border-[#2A2A28]">
+                    {/* Ports + Hostnames Row */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-[#2A2A28]">
+                      <div className="bg-[#0D0D0C] p-4">
+                        <div className="text-[11px] font-mono text-[#5C5A54] tracking-widest uppercase mb-2">{__t("Open Ports")}</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {__tv(device.ports.map((port: number) => (<span key={port} className="px-2 py-1 bg-[#1A1A18] border border-[#2A2A28] rounded text-[10px] font-mono text-[var(--cyan-primary)]">{__tv(port)}</span>)))}
+                        </div>
+                      </div>
+                      <div className="bg-[#0D0D0C] p-4">
+                        <div className="text-[11px] font-mono text-[#5C5A54] tracking-widest uppercase mb-2">{__t("Hostnames")}</div>
+                        {__tv(device.hostnames.length > 0 ? (<div className="flex flex-col gap-1">
+                            {__tv(device.hostnames.map((h: string) => (<span key={h} className="text-[10px] font-mono text-[#E8E6E0]">{__tv(h)}</span>)))}
+                          </div>) : (<span className="text-[10px] font-mono text-[#3A3A38]">{__t("No reverse DNS")}</span>))}
+                      </div>
+                    </div>
+
+                    {/* CVE Intelligence */}
+                    {__tv(device.vulns.length > 0 && (<div className="p-4 border-t border-[#2A2A28]">
+                        <div className="text-[11px] font-mono text-[#5C5A54] tracking-widest uppercase mb-3">{__t("Vulnerabilities (")}{__tv(device.vulns.length)})</div>
+                        <div className="flex flex-col gap-2">
+                          {__tv(device.vulns.map((cveId: string) => {
+                                const info = cveCache[cveId];
+                                const isLoading = !info || info.loading;
+                                const severityColor = !info?.severity ? '#5C5A54'
+                                    : info.severity === 'CRITICAL' ? '#FF3D3D'
+                                        : info.severity === 'HIGH' ? '#FF6B00'
+                                            : info.severity === 'MEDIUM' ? '#FFD700'
+                                                : '#76FF03';
+                                return (<div key={cveId} className="bg-[#111] border border-[#2A2A28] rounded-lg p-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] font-mono font-bold text-[#E8E6E0]">{__tv(cveId)}</span>
+                                    {__tv(info?.cvss != null && (<span className="text-[11px] font-mono px-1.5 py-0.5 rounded" style={{ backgroundColor: severityColor + '15', color: severityColor, border: `1px solid ${severityColor}40` }}>{__t("CVSS ")}{__tv(info.cvss)}</span>))}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {__tv(info?.severity && (<span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded" style={{ backgroundColor: severityColor + '15', color: severityColor, border: `1px solid ${severityColor}40` }}>{__tv(info.severity)}</span>))}
+                                    <a href={`https://nvd.nist.gov/vuln/detail/${cveId}`} target="_blank" rel="noreferrer" className="text-[#5C5A54] hover:text-[#E8E6E0] transition-colors">
+                                      <ExternalLink className="w-3.5 h-3.5"/>
+                                    </a>
+                                  </div>
+                                </div>
+                                {__tv(isLoading ? (<div className="flex items-center gap-2 py-1">
+                                    <Loader2 className="w-3 h-3 animate-spin text-[#5C5A54]"/>
+                                    <span className="text-[11px] font-mono text-[#5C5A54]">{__t("Fetching vulnerability intelligence...")}</span>
+                                  </div>) : (<>
+                                    <p className="text-[10px] font-mono text-[#8A8880] leading-relaxed">{__tv(info.description)}</p>
+                                    {__tv(info.cwe && <div className="text-[11px] font-mono text-[#5C5A54] mt-2">{__t("Weakness: ")}{__tv(info.cwe)}</div>)}
+                                    {__tv(info.affected && info.affected.length > 0 && (<div className="mt-2 flex flex-wrap gap-1.5">
+                                        {__tv(info.affected.map((a: any, i: number) => (<span key={i} className="text-[10px] font-mono px-1.5 py-0.5 bg-[#1A1A18] border border-[#2A2A28] rounded text-[#8A8880]">
+                                            {__tv(a.vendor)}/{__tv(a.product)}
+                                          </span>)))}
+                                      </div>))}
+                                  </>))}
+                              </div>);
+                            }))}
+                        </div>
+                      </div>))}
+                  </div>))}
+              </div>);
+            }))}
+          </div>
+          <div className="px-3 py-2 border-t border-[#2A2A28]">
+            <div className="text-[9px] font-mono text-[#5C5A54] tracking-wider">{__t("SWEPT ")}{__tv(sweepResult.summary.total_hosts)}{__t(" HOSTS IN ")}{__tv((sweepResult.sweep_time_ms / 1000).toFixed(1))}{__t("s \u00B7 ASN ")}{__tv(sweepResult.center.asn)}</div>
+          </div>
+        </div>))}
+
+      {__tv((results || (activeTab === 'crypto' && chainView === 'brief')) && !(sweepResult && !loading) && (<div className="bg-[var(--bg-primary)]/40 border border-[var(--border-primary)] rounded-lg p-3 max-h-[50vh] overflow-y-auto styled-scrollbar">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-mono tracking-widest" style={{ color: currentTab?.color }}>{__tv(currentTab?.label)}{__t(" RESULTS")}</span>
+            <span className="text-[9px] font-mono text-[var(--text-muted)] flex items-center gap-1"><Clock className="w-2.5 h-2.5"/>{__tv(new Date().toLocaleTimeString())}</span>
+          </div>
+          {__tv(renderStructuredResults())}
+        </div>))}
+
+      {__tv(history.length > 0 && !results && activeTab !== 'fingerprint' && activeTab !== 'donbot' && (<div className="space-y-1">
+          <span className="text-[10px] font-mono tracking-widest text-[var(--text-muted)]">{__t("RECENT SCANS")}</span>
+          {__tv(history.slice(0, 5).map((h, i) => (<button key={i} onClick={() => { setActiveTab(h.tab); setQuery(h.query); }} className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-[var(--hover-accent)] transition-colors text-left">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono" style={{ color: TABS.find(t => t.id === h.tab)?.color }}>{__tv(TABS.find(t => t.id === h.tab)?.label)}</span>
+                <span className="text-[11px] font-mono text-[var(--text-secondary)]">{__tv(h.query)}</span>
+              </div>
+              <span className="text-[9px] font-mono text-[var(--text-muted)]">{__tv(h.time)}</span>
+            </button>)))}
+        </div>))}
+    </div>);
+    if (isMobile)
+        return renderContent();
+    if (isFullScreen) {
+        const fullScreenNode = (<div className="fixed inset-4 z-[999] flex items-center justify-center">
+        {/* Click-away backdrop; Escape also exits. */}
+        <div className="absolute inset-[-1rem] bg-black/60 backdrop-blur-sm" onClick={() => setIsFullScreen(false)}/>
+
+        <div className="relative w-full h-full max-w-[1500px] glass-panel bg-[#0a0a09]/97 backdrop-blur-2xl border border-[var(--cyan-primary)]/40 rounded-xl flex flex-col overflow-hidden shadow-2xl shadow-[var(--cyan-primary)]/20">
+          <div className="flex items-center justify-between px-6 py-3.5 border-b border-[var(--border-secondary)] bg-[#111] flex-shrink-0">
+            <div className="flex items-center gap-3 min-w-0">
+              <Radar className="w-5 h-5 text-[var(--cyan-primary)] flex-shrink-0"/>
+              <span className="hud-text text-[16px] text-[var(--text-primary)]">{__t("OSIRIS RECON TOOLKIT")}</span>
+              <span className="gotham-tag gotham-tag--classified" style={{ fontSize: '9px' }}>{__tv(TABS.length)}{__t(" MODULES")}</span>
+              {__tv(currentTab && (<>
+                  <span className="text-[var(--text-muted)]/40">/</span>
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <currentTab.icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: currentTab.color }}/>
+                    <span className="text-[11px] font-mono font-bold tracking-wider truncate" style={{ color: currentTab.color }}>
+                      {__tv(currentTab.label)}
+                    </span>
+                  </span>
+                </>))}
+            </div>
+            <button onClick={() => setIsFullScreen(false)} className="p-2 hover:bg-white/5 rounded transition-colors text-[var(--text-muted)] hover:text-white flex-shrink-0" title={__t("Exit expanded view (Esc)")}>
+              <Minimize2 className="w-5 h-5"/>
+            </button>
+          </div>
+
+          {/* Two panes: the toolkit stays visible while results use the width. */}
+          <div className="flex-1 flex min-h-0">
+            <aside className="w-[260px] flex-shrink-0 border-r border-[var(--border-secondary)] bg-[#0d0d0c]/60">
+              {__tv(renderToolRail())}
+            </aside>
+            <main className="flex-1 min-w-0 overflow-y-auto p-6 styled-scrollbar">
+              <div className="w-full full-screen-mode-content max-w-[1000px]">
+                {__tv(currentTab && (<div className="mb-4">
+                    <div className="flex items-center gap-2.5 mb-1">
+                      <currentTab.icon className="w-5 h-5" style={{ color: currentTab.color }}/>
+                      <h2 className="text-[15px] font-mono font-bold tracking-widest" style={{ color: currentTab.color }}>
+                        {__tv(currentTab.label)}
+                      </h2>
+                    </div>
+                    <p className="text-[11px] font-mono text-[var(--text-muted)]">{__tv(currentTab.blurb)}</p>
+                  </div>))}
+                {__tv(renderContent())}
+              </div>
+            </main>
+          </div>
+        </div>
+      </div>);
+        return typeof document !== 'undefined' ? createPortal(fullScreenNode, document.body) : fullScreenNode;
+    }
+    return (<motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3, duration: 0.6 }} className="glass-panel flex flex-col overflow-hidden pointer-events-auto shrink-0 h-[500px] max-h-[80vh] resize-y">
+      <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.05)] bg-[rgba(0,0,0,0.3)] hover:bg-[var(--hover-accent)] transition-colors">
+        <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-2 flex-1">
+          <Radar className="w-3.5 h-3.5 text-[var(--cyan-primary)]"/>
+          <span className="hud-text text-[11px] text-[var(--text-primary)]">{__t("RECON TOOLKIT")}</span>
+          <span className="gotham-tag gotham-tag--info" style={{ fontSize: '9px', padding: '1px 5px' }}>{__tv(TABS.length)}{__t(" TOOLS")}</span>
+        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setIsFullScreen(true)} className="p-1.5 -m-0.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/10 transition-colors" title={__t("Full Screen")}>
+             <Maximize2 className="w-3.5 h-3.5"/>
+          </button>
+          <div className="w-1.5 h-1.5 rounded-full bg-[var(--cyan-primary)] animate-osiris-pulse"/>
+          <button onClick={() => setExpanded(!expanded)}>
+            {__tv(expanded ? <ChevronUp className="w-3.5 h-3.5 text-[var(--text-muted)]"/> : <ChevronDown className="w-3.5 h-3.5 text-[var(--text-muted)]"/>)}
+          </button>
+        </div>
+      </div>
+      <AnimatePresence>
+        {__tv(expanded && (<motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-y-auto px-3 py-3 flex-1 min-h-0 styled-scrollbar">
+            {__tv(renderContent())}
+          </motion.div>))}
+      </AnimatePresence>
+    </motion.div>);
+}
+const OsintPanel = memo(OsintPanelInner);
+export default OsintPanel;
