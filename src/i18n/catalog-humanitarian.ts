@@ -105,5 +105,7 @@ export default {
   "Excluded by publisher usage restrictions: {0}. This is not a finding that the reports are false.": "因出版者用途限制排除：{0} 条。这不代表报道虚假。",
   "Records without a current admitted snapshot match: {0}.": "未匹配当前已准入快照的记录：{0} 条。",
   "{0} submitted news record(s) are omitted because publisher permission for automated analysis is not established. This is a usage restriction, not a finding that the reports are false.": "由于尚未确认出版者的自动分析许可，已排除 {0} 条提交的新闻。这属于用途限制，不代表报道虚假。",
-  "Display only; excluded from automated analysis.": "仅供显示；不参与自动分析。"
+  "Display only; excluded from automated analysis.": "仅供显示；不参与自动分析。",
+  "News reports": "新闻报道",
+  "Open original report": "查看原始报道"
 } satisfies Record<string, string>;

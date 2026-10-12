@@ -585,7 +585,7 @@ function WarningCard({ item, now, onLocate }: {
       </div>
     </article>);
 }
-function SourcePanel({ sources, excluded }: { sources: SourceHealth[]; excluded: ExcludedSource[] }) {
+export function SourcePanel({ sources, excluded }: { sources: SourceHealth[]; excluded: ExcludedSource[] }) {
     const { locale } = __useLocale();
     const timestamp = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value))
         ? `${new Date(value).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-GB', { timeZone: 'Asia/Shanghai', hourCycle: 'h23' })} (UTC+8)`
