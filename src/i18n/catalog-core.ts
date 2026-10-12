@@ -1,5 +1,8 @@
 /** Chinese interface copy; original feed content is kept in its source language. */
 export default {
+  "Endpoints": "接口",
+  "Live feeds": "实时数据源",
+  "Keys required": "所需密钥",
   "These self-hosting and configuration examples describe the original Osiris repository. This Jingxing instance uses a separate GitHub Pages client and an API server on port 8787.": "以下自托管和配置示例适用于原始 Osiris 仓库。此景行实例采用独立的 GitHub Pages 客户端和监听 8787 端口的 API 服务。",
   "USGS DETAILS": "USGS 详情",
   "on the configured backend origin. Reads are": "位于配置的后端地址。读取操作",

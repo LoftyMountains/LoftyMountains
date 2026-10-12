@@ -38,6 +38,9 @@ export default function CommandPalette({ open, onClose, items, }: {
     const [cursor, setCursor] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const closeRef = useRef(onClose);
+    useEffect(() => { closeRef.current = onClose; }, [onClose]);
     const results = useMemo(() => {
         const q = query.trim().toLowerCase();
         if (!q)
@@ -60,13 +63,41 @@ export default function CommandPalette({ open, onClose, items, }: {
             .slice(0, 40)
             .map(r => r.it);
     }, [items, query]);
-    // Reset per opening, and focus the field.
+    // Keep keyboard focus inside the open dialog and return it to its trigger.
     useEffect(() => {
-        if (open) {
-            setQuery('');
-            setCursor(0);
-            requestAnimationFrame(() => inputRef.current?.focus());
-        }
+        if (!open) return;
+        const previous = document.activeElement as HTMLElement | null;
+        setQuery('');
+        setCursor(0);
+        const frame = requestAnimationFrame(() => inputRef.current?.focus());
+        const onDialogKey = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                closeRef.current();
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+                'button:not([disabled]), input:not([disabled]), a[href], [tabindex="0"]'
+            ) ?? []).filter(element => element.getClientRects().length > 0);
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const inside = dialogRef.current?.contains(document.activeElement);
+            if (event.shiftKey && (document.activeElement === first || !inside)) {
+                event.preventDefault();
+                last?.focus();
+            } else if (!event.shiftKey && (document.activeElement === last || !inside)) {
+                event.preventDefault();
+                first?.focus();
+            }
+        };
+        document.addEventListener('keydown', onDialogKey, true);
+        return () => {
+            cancelAnimationFrame(frame);
+            document.removeEventListener('keydown', onDialogKey, true);
+            if (previous?.isConnected) previous.focus({ preventScroll: true });
+        };
     }, [open]);
     useEffect(() => setCursor(0), [query]);
     // Keep the highlighted row inside the scroll viewport.
@@ -102,7 +133,7 @@ export default function CommandPalette({ open, onClose, items, }: {
     };
     if (!open)
         return null;
-    return (<div className="fixed inset-0 z-[500] flex items-start justify-center pt-[12vh] px-4 bg-black/70 backdrop-blur-sm" onClick={onClose} role="dialog" aria-modal="true" aria-label={__t("Search documentation")}>
+    return (<div ref={dialogRef} className="fixed inset-0 z-[500] flex items-start justify-center pt-[12vh] px-4 bg-black/70 backdrop-blur-sm" onClick={onClose} role="dialog" aria-modal="true" aria-label={__t("Search documentation")}>
       <div onClick={e => e.stopPropagation()} className="w-full max-w-xl rounded-xl border border-white/[0.12] bg-[#0A0A12] shadow-[0_20px_70px_rgba(0,0,0,0.7)] overflow-hidden">
         <div className="flex items-center gap-2.5 px-4 h-12 border-b border-white/[0.07]">
           <svg viewBox="0 0 24 24" className="w-4 h-4 text-[var(--text-muted)] shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">

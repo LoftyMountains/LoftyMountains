@@ -2,6 +2,7 @@
 .jingxing-language button { color:#99958b; padding:5px 7px; border-radius:5px; cursor:pointer; }
 .jingxing-language button[aria-pressed="true"] { background:rgba(212,175,55,.16); color:#e7ce83; }
 .jingxing-language button:focus-visible { outline:2px solid #D4AF37; outline-offset:2px; }
+.docs-root > header > div:first-child { padding-right:104px; }
 html[lang="zh-CN"] { font-family:Inter,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
 html[lang="zh-CN"] [class*="tracking-"] { letter-spacing:normal; }
 @media(max-width:767px) { .jingxing-language { top:11px; right:8px; } }
